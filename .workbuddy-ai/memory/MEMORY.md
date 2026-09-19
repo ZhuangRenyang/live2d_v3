@@ -1,0 +1,60 @@
+# 项目长期记忆 — live2d_3
+
+## 项目定位
+Live2D 看板娘模型的动作预览台。纯静态站点，托管到 GitHub Pages。
+
+## 目录约定
+```
+index.html            单文件页面（UI + 全部逻辑，无构建步骤）
+build_index.py        扫描 models/ 生成 index.json
+assets/               第三方运行库（本地存放，不依赖 CDN）
+models/index.json     自动生成的模型索引（提交进仓库）
+models/manifest.json  仅用于模型的 alias / motions 名称映射（可选）
+models/<模型目录>/      Live2D 导出原样结构，可多层嵌套
+.nojekyll             禁止 GitHub Pages 走 Jekyll
+```
+
+## 硬性约定
+- **依赖库一律本地存放**在 `assets/`，不用 CDN —— 保证 Pages 上稳定可用
+- **Cubism Core 必须用官方版本**（`cubism.live2d.com`，207KB，含 MocVersion_50）。
+  npm 的 `live2dcubismcore@1.0.2` 只支持到 Cubism 4.2，**不可用**
+- **新增模型只需把文件夹拷进 `models/`**，不改任何代码（三级降级自动发现）
+- 缩放在 `fitScale()` 里按 drawable 包围盒计算，**不要改回用画布尺寸**
+
+## ⚠️ 动作时间轴：不要用 SDK 的时钟
+`queueManager._userTimeSeconds` 是**死字段，永远为 0**。
+`Cubism4MotionManager` 不累加时钟，且 `startMotion` 的第三个参数被忽略。
+必须自己维护 `S.motionClock`，每帧：
+```js
+qe._doUpdateTime = S.motionClock;
+qe.doUpdateMotion(coreModel, S.motionClock);
+im.update(performance.now(), 0);   // ← 少了这行画面一个像素都不动
+```
+`model.autoUpdate = false`，更新循环由 `tickProgress` 独占。
+当前时间 = `_doUpdateTime - entry.getStartTime()`。
+
+## 模型发现（三级降级）
+1. **GitHub API** `git/trees/HEAD?recursive=1` —— 域名是 `*.github.io` 时启用
+2. **`models/index.json`** —— 由 `build_index.py` 生成，最稳
+3. **`window.MODELS_FALLBACK`** —— 内置兜底
+
+统一结构：`{ path, file, name, group, motions, textures, mocVersion, key, missing }`，
+`key = path + '/' + file`，是 localStorage 的记忆标识。
+
+## 当前模型规模
+42 个模型 / 2 个分组（顶层 1 + `Azue Lane(JP)` 41）。moc 版本 3.0 与 3.3，官方 Core 全支持。
+动作分组命名不统一（`''` / `Idle` / `TapTouchHead` …），
+**必须同时记 `group` + `localIndex`**，只按全局下标找会放错动作。
+
+## 页面功能（已实现）
+模型分组树+搜索、动作列表+筛选、播放/暂停/上一个/下一个/重播、进度条拖动、
+0.1–3× 变速、20–400% 缩放、拖动平移、滚轮缩放、双击复位、深色舞台、
+播完自动下一个、播完定格最后一帧、参考网格、视线跟随鼠标、
+快捷键（←/→/空格/R）、localStorage 记住模型/折叠/速度/主题
+
+## 名称映射写法（`models/manifest.json`）
+```json
+"alias":  { "my_model": "我的看板娘", "Azue Lane(JP)/aaa": "阿祖的 aaa" },
+"motions": { "idle": "待机", "touch_head": "摸摸头" }
+```
+`alias` 的键可为模型名、相对 `models/` 的路径、或完整 `路径/文件名`，按序匹配。
