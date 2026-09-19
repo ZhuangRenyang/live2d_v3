@@ -467,6 +467,8 @@
     speed: 1,
     motionClock: 0,      // 自维护的动作时间轴（秒），见 tickProgress
     holdTime: 0,         // 动作播完后定格的时间点
+    pausedEntry: null,   // 暂停/定位/定格时挂在队列里的那一项（只挂一次，避免每帧重入队导致抖动）
+    finished: false,     // 当前定格是不是「自然播完」造成的（据此决定按播放是重播还是续播）
     manual: false,       // 手动模式：用 seek 控制进度
     seekRequest: null,   // 手动模式下的目标时间
     view: { x: 0, y: 0, scale: 1 },
@@ -1075,6 +1077,8 @@
     S.seekRequest = null;
     S.motionClock = 0;
     S.holdTime = 0;
+    S.finished = false;
+    clearHoldEntry();
     var mo = S.motions[index];
 
     var mm = motionManager();
@@ -1134,9 +1138,42 @@
     var mm = motionManager();
     S.playing = !S.playing;
     if (mm) { try { mm.playing = S.playing; } catch (e) {} }
-    // 动作已播完（定格状态）时按播放 = 重播，否则会一直定在那里没有反应
-    if (S.playing && !activeEntry() && S.holdTime > 0 && S.motions.length) {
-      playMotion(S.current, true);
+
+    if (S.playing) {
+      // 从「拖动定位」恢复：重播当前动作
+      if (S.manual) {
+        S.manual = false;
+        S.seekRequest = null;
+        playMotion(S.current, true);
+        return setPlayIcon();
+      }
+      // 从定格恢复。已经走到末尾（自然播完 / 拖到最后）就重播；
+      // 中途定格则要「从定格位置续播」，不能简单重播，否则画面会跳回开头。
+      if (S.pausedEntry) {
+        var hd = currentDuration();
+        var atEnd = S.finished || (hd > 0 && S.holdTime >= hd - 0.05);
+        var resumeAt = S.holdTime;
+        clearHoldEntry();
+        S.finished = false;
+        if (atEnd) {
+          playMotion(S.current, true);
+        } else {
+          resumeMotionAt(resumeAt);
+        }
+        return setPlayIcon();
+      }
+      clearHoldEntry();
+      S.finished = false;
+    } else {
+      // 暂停：把当前进度就地钉死，防止 SDK 自己继续往前走
+      if (!S.pausedEntry && S.holdTime >= 0) {
+        var im = S.l2dModel.internalModel, cmp = coreModel();
+        if (im && mm && mm.queueManager && cmp) {
+          S.holdTime = S.motionClock;
+          S.finished = false;   // 中途暂停不是「播完」，按播放应当续播
+          mountHoldEntry(mm, cmp, S.holdTime);
+        }
+      }
     }
     setPlayIcon();
   }
@@ -1170,57 +1207,97 @@
 
     var e = activeEntry();
 
-    // 非循环动作播完后 SDK 会把队列项移除。这时若用户按了播放，
-    // 说明想再看一遍，直接从头重播，而不是永远定格。
-    if (!e && S.playing && !S.manual && S.holdTime > 0 && dur > 0) {
-      playMotion(S.current, true);
-      return;
-    }
+    // 定格项已在队列里时，activeEntry() 也会返回它；这里先辨认清楚，
+    // 让下面的分支走「定格」路径而不是「正常推进」路径。
+    var holding = !!S.pausedEntry && e === S.pausedEntry;
 
-    // 时间轴推进：暂停 / 手动（拖动）时停表
-    if (e && S.playing && !S.manual) {
+    // 时间轴推进：暂停 / 手动（拖动）/ 定格时停表
+    if (!holding && e && S.playing && !S.manual) {
       S.motionClock += dt * S.speed;
       S.holdTime = Math.min(S.motionClock, dur > 0 ? dur : S.motionClock);
     }
 
     // 手动拖动：把目标位置直接写成时间轴位置
-    if (e && S.manual && S.seekRequest !== null) {
+    if (S.manual && S.seekRequest !== null) {
       S.motionClock = S.seekRequest * dur;
       S.holdTime = S.motionClock;
-      try { e.setStartTime(0); } catch (err) {}
       S.seekRequest = null;
+      S.finished = false;   // 拖动定位是中途定格，按播放应当续播
+      // 拖动定位也走定格项：重新挂一次，终点始终保持在「远离目标点」的大值上。
+      // 曾经这里写成 setEndTime(holdTime)，导致 endTime == 求值时刻，
+      // doUpdateMotion 一进门就被 isFinished() 挡掉、动作参数根本没写进去 —— 抖动就是这么来的。
+      if (S.pausedEntry) {
+        try {
+          var qs = mm.queueManager;
+          S.pausedEntry.setStartTime(0);
+          S.pausedEntry.setEndTime(HOLD_END);
+          qs._doUpdateTime = S.holdTime;
+          qs.doUpdateMotion(cm, S.holdTime);
+        } catch (err) {}
+      } else {
+        mountHoldEntry(mm, cm, S.holdTime);
+      }
     }
 
-    if (e) {
+    if (holding) {
+      // 暂停 / 拖动定位 / 播完定格：起止时间已在入队时定死，
+      // 每帧按同一时刻重放一次即可，参数恒定不变 → 画面稳定不抖。
+      S.motionClock = S.holdTime;
+      var qh = mm.queueManager;
+      qh._doUpdateTime = S.holdTime;
+      try { qh.doUpdateMotion(cm, S.holdTime); } catch (err) {}
+    } else if (e) {
       // 用我们自己的时间重算这一帧的动作参数
       var qt = mm.queueManager;
       qt._doUpdateTime = S.motionClock;
       try { qt.doUpdateMotion(cm, S.motionClock); } catch (err) {}
-    } else if (!S.manual && S.holdTime > 0) {
+    } else if (!S.manual && S.holdTime > 0 && !isCurrentLoop()) {
       // 非循环动作播完后 SDK 会把队列项移除，此时把最后一帧续上，
-      // 避免参数回到初始姿势、进度条突然归零
+      // 避免参数回到初始姿势、进度条突然归零。
+      // 注意：这里必须「只入队一次」，否则每帧重新 startMotion 会让动作
+      // 在起始姿势与末帧之间反复横跳，表现为人物持续快速抖动。
+      //
+      // 走到这个分支说明「原本在播、现在队列空了」= 动作自然播完。
+      // 记下 finished，并把播放状态收掉：画面已定格，再显示「暂停中」会让用户困惑，
+      // 而且此时按播放应当重播，若 S.playing 仍为 true 就会被误判成「暂停」。
+      //
+      // ⚠️ 必须排除循环动作：循环动作在绕回起点的一瞬间 isFinished() 会短暂为真，
+      // SDK 随之把队列项摘掉再重新入队。若不排除，每绕一圈都会被当成「播完了」，
+      // 于是把 S.playing 置为 false，表现是循环动作播一会儿就自己停住、图标乱跳。
+      S.finished = true;
+      S.playing = false;
+      setPlayIcon();
       S.motionClock = S.holdTime;
-      reapplyHoldPosition(mm, cm, S.holdTime);
+      mountHoldEntry(mm, cm, S.holdTime);
     }
 
-    // 交给 SDK 完成呼吸/眨眼/物理，并最终把参数提交到 drawable。
-    // dt 传 0：动作进度已由上面的 doUpdateMotion 决定，这里只是「提交」这一帧。
+    // 交给 SDK 完成呼吸/眨眼/物理/姿势，并最终把参数提交到 drawable。
+    //
+    // 第一个参数（deltaMS）必须传真实帧间隔：
+    //   physics.evaluate(coreModel, dt)   —— 物理是按 dt 迭代收敛的弹簧系统，
+    //   pose.updateParameters(coreModel, dt) —— 部件淡入淡出同样按 dt 累积。
+    // 传 0 会让它们每帧都停在同一中间态、永不收敛，画面出现持续高频微抖。
+    // 第二个参数（elapsedMS）必须传 0：动作进度已由上面的 doUpdateMotion 决定，
+    // 而 internalModel.update 内部的 motionManager.update() 用的是 elapsed 时间，
+    // 传真实时间会让 motion 与表情层的时间基互相打架。
     try {
-      im.update(performance.now(), 0);
+      im.update(dt * 1000, 0);
     } catch (err) {
       try { cm.update(); cm.loadParameters(); } catch (e2) {}
     }
 
     if (dur <= 0) return;
 
-    // 动作已被移除（播完）时，进度条停在末端而不是归零
-    var t = e ? currentTime() : Math.min(S.holdTime, dur);
+    // 定格/暂停时进度条直接读时间轴位置；正常播放时按队列项算，
+    // 动作被移除（播完）时停在末端而不是归零
+    var t = holding ? Math.min(S.holdTime, dur)
+      : (e ? currentTime() : Math.min(S.holdTime, dur));
     var ratio = Math.max(0, Math.min(1, t / dur));
     els.progress.value = String(Math.round(ratio * 1000));
     els.progressVal.textContent = fmtSec(t) + ' / ' + dur.toFixed(2) + 's';
 
     // 播完自动切下一个（循环动作与手动模式除外）
-    if (S.autoNext && !S.manual && !isCurrentLoop()) {
+    if (S.autoNext && !S.manual && !holding && !isCurrentLoop()) {
       var finished = (!e) || (t >= dur - 0.02);
       if (finished && !S._advancing) {
         S._advancing = true;
@@ -1230,9 +1307,57 @@
     }
   }
 
-  // 动作播完后 SDK 会把它从队列里移除，参数随即回到初始姿势（表现为「弹回」）。
-  // 这里把同一个动作对象重新入队并定位到末尾，让它保持最后一帧。
-  function reapplyHoldPosition(mm, cm, holdTime) {
+  // 定格队列项的终点时间。必须远大于任何动作时长，让 isFinished() 恒为 false，
+  // 否则 doUpdateMotion 会空转、参数写不进去（表现为人物持续抖动）。
+  var HOLD_END = 3600;
+
+  // 从定格位置「续播」：重新入队当前动作，并让它在 at 秒处接上。
+  //
+  // doUpdateMotion 用「t - startTime」当动作进度，startTime 会在首次
+  // updateParameters 时被 SDK 重设成当时的 t。所以要续播，就得让 SDK
+  // 把 startTime 设成 (当前时钟 - at)，这样 t - startTime 恰好等于 at。
+  function resumeMotionAt(at) {
+    var mm = motionManager(), cm = coreModel();
+    if (!mm || !mm.queueManager || !cm) return;
+    var mo = S.motions[S.current];
+    if (!mo) return;
+    var groupList = (mm.motionGroups && mm.motionGroups[mo.group || '']) || [];
+    var motionObj = (typeof mo.localIndex === 'number' && mo.localIndex >= 0)
+      ? groupList[mo.localIndex] : null;
+    if (!motionObj) { playMotion(S.current, true); return; }
+    try {
+      var qt = mm.queueManager;
+      qt.startMotion(motionObj, false);
+      var qe = activeEntry();
+      if (!qe) { playMotion(S.current, true); return; }
+      var dur = mo.duration || 0;
+      qe.setStartTime(0);
+      qe.setEndTime(dur > 0 ? dur : -1);
+      S.motionClock = at;
+      S.holdTime = at;
+      qt._doUpdateTime = at;
+      qt.doUpdateMotion(cm, at);
+    } catch (err) {
+      playMotion(S.current, true);
+    }
+  }
+
+
+  //
+  // 做法：入队后把起点定在 0、终点设成 HOLD_END（一个远超任何动作时长的值），
+  // 然后每帧都以同一个 t = holdTime 去求值。
+  //
+  // 为什么终点不能设成 holdTime 本身：
+  //   doUpdateMotion 开头是 `if (!e.isAvailable() || e.isFinished()) return;`，
+  //   而 isFinished() 判定 t >= endTime。若 endTime == holdTime，一入队就算 finished，
+  //   doUpdateMotion 整个空转 —— 动作参数不会被写入，姿势退回默认值，
+  //   呼吸/物理继续在默认值上叠加，画面上就是人物持续快速抖动。
+  // 为什么终点不能设成 -1（表示「无终点」）：
+  //   非循环动作走到终点会被 SDK 自动出队，我们又要重新挂，反而每帧都在重入队。
+  //
+  // 关键：只挂一次。每帧重新 startMotion 会让动作在起始姿势与末帧之间来回跳。
+  function mountHoldEntry(mm, cm, holdTime) {
+    if (S.pausedEntry) return;   // 已经挂好了，不要重复入队
     var mo = S.motions[S.current];
     if (!mo) return;
     var groupList = (mm.motionGroups && mm.motionGroups[mo.group || '']) || [];
@@ -1244,11 +1369,20 @@
       qt.startMotion(motionObj, false);
       var qe = activeEntry();
       if (!qe) return;
+      // 起点给 0：SDK 首次 updateParameters 时会自己把 startTime 重设成当前 t，
+      // 之后 doUpdateMotion 用的是「t - startTime」，只要 t 不变，参数就不变。
       qe.setStartTime(0);
-      qe.setEndTime(holdTime);
+      qe.setEndTime(HOLD_END);
+      S.pausedEntry = qe;
       qt._doUpdateTime = holdTime;
       qt.doUpdateMotion(cm, holdTime);
     } catch (err) {}
+  }
+
+  // 任何时间轴要恢复「自己推进」的操作（重播 / 换动作 / 取消暂停）都必须清掉这个标记，
+  // 否则上一支动作的定格项会继续挂在队列里。
+  function clearHoldEntry() {
+    S.pausedEntry = null;
   }
 
   // ---------- 6. 交互 ----------
@@ -1318,6 +1452,16 @@
       var ratio = parseFloat(els.progress.value) / 1000;
       var dur = currentDuration();
       els.progressVal.textContent = fmtSec(ratio * dur) + (dur ? ' / ' + dur.toFixed(2) + 's' : '');
+      // 拖动进度条时给时间轴加一个「暂停锚点」：
+      // 必须把队列项就地钉死，否则 SDK 会继续按自己的时间基推进，
+      // 松手瞬间会跳回原位置。
+      if (!S.pausedEntry && S.l2dModel) {
+        var im = S.l2dModel.internalModel, mmp = motionManager(), cmp = coreModel();
+        if (im && mmp && mmp.queueManager && cmp) {
+          S.holdTime = ratio * dur;
+          mountHoldEntry(mmp, cmp, S.holdTime);
+        }
+      }
       // 手动模式下由时间轴拖动驱动动作进度（见 tickProgress 的 manual 分支）
       S.seekRequest = ratio;
     });
@@ -1517,6 +1661,9 @@
               t: currentTime(),
               dur: currentDuration(),
               holdTime: S.holdTime,
+              finished: S.finished,
+              paused: !!S.pausedEntry,
+              holdIsActive: !!S.pausedEntry && e === S.pausedEntry,
               autoUpdate: S.l2dModel && S.l2dModel.autoUpdate,
               queueLen: m && m.queueManager ? (m.queueManager._motions || []).length : -1,
               hasEntry: !!e,
