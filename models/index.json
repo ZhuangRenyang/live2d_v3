@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "count": 42,
+  "count": 41,
   "models": [
     {
       "path": "aimierbeierding_2",
@@ -17,24 +17,6 @@
       "textures": 2,
       "mocVersion": "3.0",
       "size": 3031904,
-      "missing": []
-    },
-    {
-      "path": "Azue Lane(JP)/bisimai_2",
-      "file": "3712cc44403f6c247db4d7c0edd16016.model3.json",
-      "name": "3712cc44403f6c247db4d7c0edd16016",
-      "group": "Azue Lane(JP)",
-      "parts": [
-        "Azue Lane(JP)",
-        "bisimai_2"
-      ],
-      "motions": 15,
-      "motionGroups": [
-        ""
-      ],
-      "textures": 1,
-      "mocVersion": "3.0",
-      "size": 1946067,
       "missing": []
     },
     {
