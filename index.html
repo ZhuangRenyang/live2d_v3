@@ -2,7 +2,10 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<!-- viewport-fit=cover：iPhone 刘海屏下让页面铺到安全区，再用 env(safe-area-inset-*) 把内容推回来 -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#ffffff" />
+<meta name="format-detection" content="telephone=no" />
 <title>Live2D 模型动作预览台</title>
 <style>
   :root{
@@ -22,8 +25,9 @@
     --shadow-sm: 0 1px 2px rgba(28,36,48,.06), 0 2px 8px rgba(28,36,48,.05);
     --shadow-md: 0 2px 6px rgba(28,36,48,.07), 0 10px 28px rgba(28,36,48,.09);
   }
-  *{ box-sizing: border-box; }
+  *{ box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body{ height:100%; }
+  html{ -webkit-text-size-adjust:100%; text-size-adjust:100%; }
   body{
     margin:0;
     background: var(--bg);
@@ -32,15 +36,21 @@
     font-size:14px;
     -webkit-font-smoothing:antialiased;
     overflow:hidden;
+    overscroll-behavior:none;
   }
   button{ font-family:inherit; }
 
   /* ============ 布局 ============ */
-  .app{ display:flex; flex-direction:column; height:100vh; }
+  /* 高度优先用 dvh（移动端地址栏收放时不会算错），不认识的浏览器退回 vh */
+  .app{ display:flex; flex-direction:column; height:100vh; height:100dvh; }
 
   .topbar{
     display:flex; align-items:center; gap:14px;
-    padding:0 18px; height:56px; flex:0 0 56px;
+    height:56px; flex:0 0 56px;
+    /* 刘海/圆角屏：左右留出安全区，普通屏就是 18px */
+    padding-top:0; padding-bottom:0;
+    padding-left:max(18px, env(safe-area-inset-left));
+    padding-right:max(18px, env(safe-area-inset-right));
     background:var(--panel); border-bottom:1px solid var(--line);
     box-shadow: var(--shadow-sm); z-index:20;
   }
@@ -98,7 +108,7 @@
     display:flex; flex-direction:column; min-height:0;
   }
   .side-head{
-    padding:14px 16px 10px; border-bottom:1px solid var(--line);
+    position:relative; padding:14px 16px 10px; border-bottom:1px solid var(--line);
   }
   .side-head .t{ font-size:12px; font-weight:700; letter-spacing:.9px; text-transform:uppercase; color:var(--text-faint); }
   .side-head .n{ font-size:12px; color:var(--text-dim); margin-top:4px; }
@@ -171,6 +181,10 @@
   .stage-wrap{ flex:1 1 auto; display:flex; flex-direction:column; min-width:0; min-height:0; }
   .stage{
     flex:1 1 auto; position:relative; min-height:0; overflow:hidden;
+    /* touch-action:none —— 触屏上的拖动/双指缩放全由 pointer 事件接管，
+       不设的话浏览器会把手指拖动当成页面滚动抢走，模型就拖不动了 */
+    touch-action:none;
+    -webkit-user-select:none; user-select:none;
     background:
       radial-gradient(1100px 620px at 50% 8%, #ffffff 0%, #f7f9fc 45%, #eaeff7 100%);
   }
@@ -239,7 +253,10 @@
   /* ============ 底部控制条 ============ */
   .controls{
     flex:0 0 auto; background:var(--panel); border-top:1px solid var(--line);
-    padding:10px 16px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding-top:10px; padding-bottom:max(10px, env(safe-area-inset-bottom));
+    padding-left:max(16px, env(safe-area-inset-left));
+    padding-right:max(16px, env(safe-area-inset-right));
     box-shadow:0 -1px 3px rgba(28,36,48,.04); z-index:10;
   }
   .ctl{ display:flex; align-items:center; gap:7px; }
@@ -329,15 +346,151 @@
   .stage-seg button[data-stage="dark"]  .sw-dot{ background:#1e2531; }
   .stage-seg button[data-stage="black"] .sw-dot{ background:#000; }
 
-  @media (max-width:860px){
-    .sidebar{ width:230px; flex-basis:230px; }
+  /* ============================================================
+     多端适配
+     断点：≥1024 桌面（上面这套布局原样生效）
+           768–1023 平板 —— 侧栏收窄、藏掉副标题
+           ≤767 手机 —— 侧栏变成可滑出的抽屉，控制条压成一行横滑
+           ≤520 高 或 横屏手机 —— 上下两条一起压扁，把高度留给舞台
+           pointer:coarse —— 触屏设备加大点按目标
+     ============================================================ */
+
+  /* 手机端才出现的抽屉开关；桌面/平板完全不占位 */
+  .nav-btn{ display:none; }
+  .nav-close{
+    display:none; position:absolute; right:10px; top:10px;
+    width:28px; height:28px; border-radius:8px; padding:0;
+    border:1px solid var(--line-strong); background:var(--panel);
+    color:var(--text-dim); cursor:pointer;
+    align-items:center; justify-content:center; transition:.15s;
+  }
+  .nav-close:hover{ border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
+
+  /* 抽屉拉开时压在舞台上的遮罩：点它就收起侧栏 */
+  .nav-scrim{
+    display:none; position:fixed; inset:0; z-index:30;
+    background:rgba(20,26,35,.42);
+    opacity:0; transition:opacity .24s; pointer-events:none;
+  }
+  .app.nav-open .nav-scrim{ opacity:1; pointer-events:auto; }
+  /* 全屏时屏幕上只能有模型，遮罩与抽屉都不许冒头 */
+  .app.fs .nav-scrim{ display:none !important; }
+  .app.fs .sidebar{ display:none !important; }
+
+  /* —— 平板 —— */
+  @media (max-width:1023px){
+    .sidebar{ width:244px; flex-basis:244px; }
     .brand .sub{ display:none; }
+  }
+
+  /* —— 手机 / 横屏手机 ——
+     横屏手机宽度常常超过 767px（iPhone 横屏就有 844px），但高度只有 390px 左右，
+     这时如果按平板处理，侧栏会白白吃掉 244px 宽、控制条还会折成两行。
+     所以「矮视口」也一并按手机处理：侧栏收进抽屉，把宽度和高度都还给舞台。 */
+  @media (max-width:767px), (max-height:520px) and (max-width:1023px){
+    .nav-btn{ display:flex; }
+    .nav-close{ display:flex; }
+    .nav-scrim{ display:block; }
+
+    .topbar{
+      height:50px; flex-basis:50px; gap:8px;
+      padding-left:max(12px, env(safe-area-inset-left));
+      padding-right:max(12px, env(safe-area-inset-right));
+    }
+    .brand h1{ display:none; }              /* 标题让位给按钮 */
+    .brand .logo{ width:26px; height:26px; flex:0 0 26px; font-size:12px; }
+    .gh-link{ width:30px; height:30px; }
+    .seg button{ font-size:12px; padding:5px 8px; }
+    /* 舞台主题只留三个色点：文字节点没法单独隐藏，所以标签包在 .seg-txt 里 */
+    .stage-seg .seg-txt{ display:none; }
+    .stage-seg button{ padding:6px 8px; }
+
+    /* 侧栏 → 抽屉：脱离文档流，从左侧滑出，不再挤压舞台 */
+    .sidebar{
+      position:fixed; z-index:40; left:0; top:0; bottom:0;
+      width:min(84vw, 316px); flex:0 0 auto; border-right:1px solid var(--line);
+      transform:translateX(-102%);
+      transition:transform .26s cubic-bezier(.4,0,.2,1);
+      padding-top:env(safe-area-inset-top);
+      padding-bottom:env(safe-area-inset-bottom);
+      box-shadow:none;
+    }
+    .app.nav-open .sidebar{
+      transform:none;
+      box-shadow:0 10px 40px rgba(20,26,35,.28);
+    }
+
+    /* 控制条压成一行横向滚动：手机竖屏高度金贵，宁可横滑也不要多占两行。
+       留一条细滚动条当「右边还有东西」的提示，别用 scrollbar-width:none 藏起来。 */
+    .controls{
+      flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden;
+      gap:10px; overscroll-behavior-x:contain;
+      -webkit-overflow-scrolling:touch;
+      scrollbar-width:thin;
+      padding-top:8px;
+      padding-bottom:max(8px, env(safe-area-inset-bottom));
+      padding-left:max(12px, env(safe-area-inset-left));
+      padding-right:max(12px, env(safe-area-inset-right));
+    }
+    .controls::-webkit-scrollbar{ height:4px; }
+    .controls::-webkit-scrollbar-track{ background:transparent; }
+    .controls::-webkit-scrollbar-thumb{ background:#ccd5e2; border:0; border-radius:3px; }
+    .controls::-webkit-scrollbar-thumb:hover{ background:#b3bfd1; }
+    .controls > *{ flex:0 0 auto; }
+    .controls input[type=range]{ width:78px !important; }
+    .controls .divider{ height:18px; }
+    #btnDownload{ margin-left:0 !important; }
+    .icon-btn{ width:34px; height:34px; }
+
+    .badge{ left:10px; top:9px; padding:5px 9px; }
+    .badge .b1{ font-size:12px; }
+    .badge .b2{ font-size:10.5px; }
+    .stage-hint{ font-size:11px; bottom:8px; padding:3px 10px; }
+    .overlay{ padding:18px; }
+    .overlay .msg{ font-size:12.5px; }
+    .overlay .detail{ font-size:11px; }
+    .exit-fs{
+      right:max(12px, env(safe-area-inset-right));
+      top:max(12px, env(safe-area-inset-top));
+    }
+  }
+
+  /* —— 窄屏手机（iPhone SE 一类）：滑块再短一点 —— */
+  @media (max-width:400px){
+    .controls input[type=range]{ width:64px !important; }
+    .controls .val{ min-width:26px; }
+  }
+
+  /* —— 矮视口（横屏手机）：在手机布局的基础上再把上下两条压扁 —— */
+  @media (max-height:520px){
+    .topbar{ height:44px; flex-basis:44px; }
+    .brand h1{ display:none; }
+    .controls{ gap:10px; padding-top:6px; padding-bottom:max(6px, env(safe-area-inset-bottom)); }
+    .icon-btn{ width:30px; height:30px; }
+    .stage-hint{ display:none; }          /* 横屏时提示会挡住模型 */
+  }
+
+  /* —— 触屏：把点按目标放大到能稳稳戳中的尺寸 —— */
+  @media (pointer:coarse){
+    .model-item{ padding:11px 10px; }
+    .group-head{ padding:10px 8px; }
+    .search input{ padding-top:9px; padding-bottom:9px; }
+    .seg button{ padding:7px 11px; }
+    .tbtn{ padding:8px 13px; }
   }
 </style>
 </head>
 <body>
 <div class="app">
   <header class="topbar">
+    <!-- 手机端才出现：滑出 / 收起模型列表抽屉 -->
+    <button class="icon-btn nav-btn" id="btnNav" type="button"
+            title="模型列表" aria-label="模型列表" aria-expanded="false" aria-controls="modelList">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+           stroke-width="1.7" stroke-linecap="round">
+        <path d="M2.5 4h11"/><path d="M2.5 8h11"/><path d="M2.5 12h11"/>
+      </svg>
+    </button>
     <div class="brand">
       <div class="logo">L2D</div>
       <h1>Live2D 模型动作预览台</h1>
@@ -351,9 +504,9 @@
       </svg>
     </a>
     <div class="seg stage-seg" id="stageSeg" role="group" aria-label="舞台背景">
-      <button type="button" data-stage="light" class="on" title="浅色舞台"><i class="sw-dot"></i>浅色</button>
-      <button type="button" data-stage="dark"  title="深色舞台（快捷键 T 循环切换）"><i class="sw-dot"></i>深色</button>
-      <button type="button" data-stage="black" title="黑色舞台（快捷键 T 循环切换）"><i class="sw-dot"></i>黑色</button>
+      <button type="button" data-stage="light" class="on" title="浅色舞台"><i class="sw-dot"></i><span class="seg-txt">浅色</span></button>
+      <button type="button" data-stage="dark"  title="深色舞台（快捷键 T 循环切换）"><i class="sw-dot"></i><span class="seg-txt">深色</span></button>
+      <button type="button" data-stage="black" title="黑色舞台（快捷键 T 循环切换）"><i class="sw-dot"></i><span class="seg-txt">黑色</span></button>
     </div>
     <button class="icon-btn" id="btnFull" title="全屏播放（整个屏幕只显示模型）">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -369,6 +522,14 @@
       <div class="side-head">
         <div class="t">模型列表</div>
         <div class="n" id="modelCount">加载中…</div>
+        <!-- 手机端抽屉里的收起按钮。注意：它必须待在 .side-head 内部，
+             不能成为 .sidebar 的直接子元素 —— 回归断言侧栏只有 3 个直接子元素 -->
+        <button class="nav-close" id="btnNavClose" type="button" title="收起列表" aria-label="收起模型列表">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round">
+            <path d="M4 4l8 8"/><path d="M12 4l-8 8"/>
+          </svg>
+        </button>
       </div>
       <div class="search" style="margin-top:8px;">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7">
@@ -426,11 +587,15 @@
         <div class="divider"></div>
 
         <label class="sw"><input type="checkbox" id="showWire" /><span class="track"></span><span>显示网格</span></label>
+        <label class="sw" title="开：当前模型全部动作播完后，自动切到模型列表里的下一个（到末尾回到第一个），一直轮播下去；关：只在本模型内循环动作，不切模型"><input type="checkbox" id="listLoop" checked /><span class="track"></span><span>列表循环</span></label>
         <button class="tbtn" id="btnReset">复位视图</button>
-        <button class="tbtn" id="btnFull2" style="margin-left:auto;">全屏播放</button>
+        <button class="tbtn" id="btnDownload" style="margin-left:auto;" title="把当前模型打包成 zip 下载（含 moc3 / 贴图 / 动作 / 语音）">下载模型</button>
       </div>
     </div>
   </div>
+
+  <!-- 手机端抽屉拉开时盖在舞台上的遮罩，点击即收起侧栏 -->
+  <div class="nav-scrim" id="navScrim" aria-hidden="true"></div>
 </div>
 
 <script src="assets/live2dcubismcore.min.js"></script>
@@ -472,9 +637,14 @@
     stageSeg:     document.getElementById('stageSeg'),
     stageSegBtns: document.querySelectorAll('#stageSeg button'),
     btnFull:      document.getElementById('btnFull'),
-    btnFull2:     document.getElementById('btnFull2'),
+    btnDownload:  document.getElementById('btnDownload'),
+    listLoop:     document.getElementById('listLoop'),
     btnExitFs:    document.getElementById('btnExitFs'),
-    ghLink:       document.getElementById('ghLink')
+    ghLink:       document.getElementById('ghLink'),
+    stageHint:    document.getElementById('stageHint'),
+    btnNav:       document.getElementById('btnNav'),
+    btnNavClose:  document.getElementById('btnNavClose'),
+    navScrim:     document.getElementById('navScrim')
   };
   var appEl = document.querySelector('.app');
 
@@ -503,10 +673,22 @@
     wireOn: false,
     busyModel: false,
     pendingModel: null,  // 载入中又点了别的模型时暂存下来，载完再切过去
-    autoPlayAll: true,   // 固定开启：模型载入后从第 1 个动作依次播完全部，再从头循环
+    autoPlayAll: true,   // 「列表循环」开关。这里的「列表」指的是**模型列表**（侧栏那个）：
+                         //   开 → 当前模型全部动作播完后，自动切到列表里的下一个模型，
+                         //        到列表末尾绕回第一个，一直轮播下去
+                         //   关 → 只在本模型内循环动作，永远不切模型
+    _skipCount: 0,       // 连续跳过了几个「一个动作都没有」的模型（见 tickSkipMotionless）
+    _skipAt: 0,          // 上次跳过的时刻，用来限速，避免在 tick 里连跳
+    downloading: false,  // 「下载模型」打包中，防止连点
     fullscreen: false,   // 是否处于「全屏只显示模型」模式
     stageTheme: 'light', // 舞台背景：'light' | 'dark' | 'black'
-    primed: false        // 动作队列是否已由 playMotion 初始化好（见 tickProgress 开头）
+    primed: false,       // 动作队列是否已由 playMotion 初始化好（见 tickProgress 开头）
+    navOpen: false,      // 手机端模型列表抽屉是否展开（.app.nav-open）
+    hiddenParts: [],     // 当前模型要隐藏的部件名（来自 models/manifest.json）
+    hiddenDrawables: [], // 当前模型要隐藏的网格名（同上）
+    hiddenMapParts: null,// manifest.json 里的 hiddenParts 全表
+    hiddenMapDrawables: null,
+    _hideCache: null     // 「名字 → 索引」缓存，载入新模型时必须清空
   };
 
   // ---------- 工具 ----------
@@ -547,6 +729,7 @@
         model: S.model ? S.model.key : null,
         stage: S.stageTheme,      // 'light' | 'dark' | 'black'
         speed: S.speed,
+        listLoop: S.autoPlayAll,  // 「列表循环」开关
         collapsed: S.collapsed
       }));
     } catch (e) { /* 忽略隐私模式下的写入失败 */ }
@@ -586,6 +769,11 @@
     return fetchJSON('models/manifest.json').then(function (d) {
       if (d.alias) S.alias = d.alias;
       if (d.motions) S.motionNames = d.motions;
+      // 按模型隐藏部件 / 网格：个别模型导出时丢掉了部分 drawable 的参数绑定，
+      // 这些网格的不透明度恒为 1 且没有任何参数能驱动，于是本该隐藏的备用图层
+      // 永久显示（现象就是「多了一只手 / 一条手臂」）。详见 applyHiddenLayers。
+      if (d.hiddenParts) S.hiddenMapParts = d.hiddenParts;
+      if (d.hiddenDrawables) S.hiddenMapDrawables = d.hiddenDrawables;
       return d;
     }).catch(function () { return {}; });
   }
@@ -696,15 +884,45 @@
   }
 
   // ---------- 2. 侧栏渲染 ----------
-  function renderModels() {
+  // 侧栏当前「看得见」的模型，**顺序与侧栏里显示的一致**。
+  //
+  // ⚠️ 不能直接返回 S.models：renderModels() 会把「有分组的」排在前面、顶层散放的排在最后，
+  //    两者顺序不一样。而「列表循环」的「列表」正是用户眼前这个列表，
+  //    用 S.models 的顺序轮播会让侧栏高亮忽前忽后地跳。
+  //    所以把排序规则收敛到这一个函数里，渲染和轮播共用，别再各写一份。
+  function visibleModels() {
     var kw = (els.modelSearch.value || '').trim().toLowerCase();
-    els.modelList.innerHTML = '';
-
     var matched = S.models.filter(function (m) {
       if (!kw) return true;
       var hay = (modelTitle(m) + ' ' + m.name + ' ' + m.path).toLowerCase();
       return hay.indexOf(kw) !== -1;
     });
+    if (kw) return matched;   // 搜索时是平铺展示，顺序就是 S.models 的顺序
+
+    // 默认按分组折叠展示：有分组的排在前面（组名升序），顶层散放的最后
+    var groups = {}, order = [];
+    matched.forEach(function (m) {
+      var g = m.group || '';
+      if (!groups[g]) { groups[g] = []; order.push(g); }
+      groups[g].push(m);
+    });
+    order.sort(function (a, b) {
+      if (a === b) return 0;
+      if (!a) return 1;
+      if (!b) return -1;
+      return a.toLowerCase() < b.toLowerCase() ? -1 : 1;
+    });
+    var out = [];
+    order.forEach(function (g) { out = out.concat(groups[g]); });
+    return out;
+  }
+
+  function renderModels() {
+    var kw = (els.modelSearch.value || '').trim().toLowerCase();
+    els.modelList.innerHTML = '';
+
+    // 顺序已经由 visibleModels() 定好（组名升序、顶层最后），这里只管画
+    var matched = visibleModels();
 
     var srcLabel = { github: 'GitHub API 自动发现', index: 'models/index.json', fallback: '内置清单' }[S.source] || '';
     els.modelCount.textContent = kw
@@ -726,20 +944,12 @@
       return;
     }
 
-    // 默认按分组折叠展示
+    // 默认按分组折叠展示（顺序已经排好，这里只切段，不要再排一次）
     var groups = {}, order = [];
     matched.forEach(function (m) {
       var g = m.group || '';
       if (!groups[g]) { groups[g] = []; order.push(g); }
       groups[g].push(m);
-    });
-
-    // 有分组的排在前面，顶层散放的最后
-    order.sort(function (a, b) {
-      if (a === b) return 0;
-      if (!a) return 1;
-      if (!b) return -1;
-      return a.toLowerCase() < b.toLowerCase() ? -1 : 1;
     });
 
     order.forEach(function (g) {
@@ -953,6 +1163,13 @@
 
   function loadIntoStage(manifestUrl) {
     return new Promise(function (resolve, reject) {
+      // 取当前模型要隐藏的部件/网格，并清掉上一个模型留下的索引缓存。
+      // 放在「卸载旧模型」之前：必须在新模型的第一帧渲染出来之前就生效，
+      // 否则会先闪一下带多余手臂的画面。
+      S.hiddenParts = pickHidden(S.hiddenMapParts) || [];
+      S.hiddenDrawables = pickHidden(S.hiddenMapDrawables) || [];
+      S._hideCache = { partIdx: [], drawIdx: [], resolved: false };
+
       // 卸载旧模型
       if (S.l2dModel) {
         try { S.app.stage.removeChild(S.l2dModel); S.l2dModel.destroy(); } catch (e) {}
@@ -983,8 +1200,264 @@
         // 眼部跟随鼠标
         model.on('pointermove', function () {});
         layoutModel(true);
+        // 新模型的第一帧就要是干净的（去掉多余图层），不能等 tickProgress 下一帧
+        applyHiddenLayers();
         resolve(model);
       }).catch(reject);
+    });
+  }
+
+  // ---------- 按模型隐藏部件 / 网格（models/manifest.json） ----------
+  //
+  // ⚠️ 为什么需要这个东西：有些模型在导出时丢掉了部分 drawable 的「不透明度参数绑定」。
+  //    这些网格的静态不透明度是 1，而 moc3 里没有任何参数能改变它 —— 于是本该只在
+  //    特定动作里出现的备用手/手臂永久显示，看上去就是「多了一只手」。
+  //
+  //    以 zhala_2 为例（已用 181 个参数逐个推到 min/max 验证过，透明度/可见性/顶点
+  //    三项全都不动，说明绑定确实不存在于 moc3 里）：
+  //      PartHandLCongxia    —— 10 张网格（armfore_l3 + hand_l_default_shouzhang_upper 等）
+  //      PartHandLNakaiDuli  —— 7 张网格（hand_l_nakai_*2 共 5 张 + hand_l_nie_shouzhang3 + armfore_l_peng3）
+  //    这 17 张正好是 moc3 里 drawable 顺序的最后 17 个（后期追加进去、绑定没带过来）。
+  //    它们本该由 ParamHandLCongxiaAlpha / ParamHandLNakaiAlpha / ParamHandLNakai2Alpha 控制，
+  //    这三个参数确实存在、也确实被 login.motion3.json 驱动（NakaiAlpha 在 login 前 10.2 秒为 1），
+  //    但网格这一侧没有读它们。**任何渲染器都会把它们画出来，不是本页面的问题。**
+  //
+  //    既然网格侧无法自己恢复绑定，就只能从数据侧指定「隐藏谁」。
+  //    配置放在 models/manifest.json，新增模型依旧不用改代码。
+  //
+  //    注意：这里必须每帧重设。SDK 每次 update 都会按绑定重新计算 drawable 的不透明度，
+  //    被重置的正是我们手工写进去的 0。
+  function pickHidden(map) {
+    if (!map || !S.model) return [];
+    var m = S.model;
+    var keys = [m.key, (m.path && m.file) ? (m.path + '/' + m.file) : '', m.path, m.name];
+    for (var i = 0; i < keys.length; i++) {
+      if (keys[i] && map[keys[i]]) return map[keys[i]];
+    }
+    return [];
+  }
+
+  function applyHiddenLayers() {
+    var im = S.l2dModel && S.l2dModel.internalModel;
+    if (!im || !im.coreModel) return;
+    var core = im.coreModel;
+    var m = core._model || core;          // CubismModel 包装层下面才是真正的 core model
+    if (!m || !m.parts || !m.drawables) return;
+    var parts = m.parts, draw = m.drawables;
+
+    var hc = S._hideCache;
+    if (!hc) return;
+
+    // 名字 → 索引只在载入时解析一次（部件/网格列表在一次载入内是固定的）
+    if (!hc.resolved) {
+      hc.resolved = true;
+      for (var i = 0; i < S.hiddenParts.length; i++) {
+        var pi = parts.ids.indexOf(S.hiddenParts[i]);
+        if (pi >= 0) hc.partIdx.push(pi);
+      }
+      for (var j = 0; j < S.hiddenDrawables.length; j++) {
+        var di = draw.ids.indexOf(S.hiddenDrawables[j]);
+        if (di >= 0) hc.drawIdx.push(di);
+      }
+    }
+    for (var a = 0; a < hc.partIdx.length; a++) parts.opacities[hc.partIdx[a]] = 0;
+    for (var b = 0; b < hc.drawIdx.length; b++) draw.opacities[hc.drawIdx[b]] = 0;
+  }
+
+  // ---------- 把当前模型打包成 zip 下载 ----------
+  //
+  // 模型目录里的文件是靠 model3.json 的 FileReferences 串起来的，所以顺着引用关系
+  // 收集就能得到一份「解压即用」的模型目录 —— 不需要服务端列目录
+  // （Pages 是静态托管，浏览器也没法列目录）。
+  //
+  // zip 用 **STORE（不压缩）**：moc3 / png / mp3 本来就已经压过了，再 deflate 收益极小，
+  // 却要额外引一个压缩库。store 格式只要自己算 CRC32 就行，几十行搞定。
+  // zip 里套一层以模型目录名命名的文件夹，解压后直接丢进 models/ 就能被页面认出来。
+
+  var CRC_TABLE = null;
+  function crc32(bytes) {
+    if (!CRC_TABLE) {
+      CRC_TABLE = new Uint32Array(256);
+      for (var n = 0; n < 256; n++) {
+        var c = n;
+        for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        CRC_TABLE[n] = c >>> 0;
+      }
+    }
+    var crc = 0xFFFFFFFF;
+    for (var i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+
+  // zip 里的时间戳用 DOS 格式（年从 1980 起算），填 0 的话解压出来会显示成 1979 年
+  function dosDateTime(d) {
+    var y = d.getFullYear();
+    if (y < 1980) y = 1980;
+    return {
+      date: ((y - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate(),
+      time: (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1)
+    };
+  }
+
+  function buildZip(entries, when) {
+    var dt = dosDateTime(when || new Date());
+    var enc = new TextEncoder();
+    var parts = [], central = [], offset = 0;
+
+    for (var i = 0; i < entries.length; i++) {
+      var nameBytes = enc.encode(entries[i].name);
+      var data = entries[i].data;
+      var crc = crc32(data);
+
+      var head = new Uint8Array(30 + nameBytes.length);
+      var dv = new DataView(head.buffer);
+      dv.setUint32(0, 0x04034b50, true);          // 本地文件头签名
+      dv.setUint16(4, 20, true);                  // 需要的版本 2.0
+      dv.setUint16(6, 0x0800, true);              // bit11：文件名是 UTF-8
+      dv.setUint16(8, 0, true);                   // 压缩方式 0 = 不压缩
+      dv.setUint16(10, dt.time, true);
+      dv.setUint16(12, dt.date, true);
+      dv.setUint32(14, crc, true);
+      dv.setUint32(18, data.length, true);        // 压缩后大小
+      dv.setUint32(22, data.length, true);        // 原始大小
+      dv.setUint16(26, nameBytes.length, true);
+      dv.setUint16(28, 0, true);                  // 扩展字段长度
+      head.set(nameBytes, 30);
+
+      parts.push(head, data);
+      central.push({ name: nameBytes, crc: crc, size: data.length, offset: offset });
+      offset += head.length + data.length;
+    }
+
+    var cd = [], cdSize = 0;
+    for (var j = 0; j < central.length; j++) {
+      var c = central[j];
+      var rec = new Uint8Array(46 + c.name.length);
+      var d2 = new DataView(rec.buffer);
+      d2.setUint32(0, 0x02014b50, true);          // 中央目录项签名
+      d2.setUint16(4, 20, true);                  // 创建版本
+      d2.setUint16(6, 20, true);                  // 需要的版本
+      d2.setUint16(8, 0x0800, true);
+      d2.setUint16(10, 0, true);
+      d2.setUint16(12, dt.time, true);
+      d2.setUint16(14, dt.date, true);
+      d2.setUint32(16, c.crc, true);
+      d2.setUint32(20, c.size, true);
+      d2.setUint32(24, c.size, true);
+      d2.setUint16(28, c.name.length, true);
+      d2.setUint16(30, 0, true);                  // 扩展字段
+      d2.setUint16(32, 0, true);                  // 注释
+      d2.setUint16(34, 0, true);                  // 起始磁盘号
+      d2.setUint16(36, 0, true);                  // 内部属性
+      d2.setUint32(38, 0, true);                  // 外部属性
+      d2.setUint32(42, c.offset, true);           // 本地文件头偏移
+      rec.set(c.name, 46);
+      cd.push(rec);
+      cdSize += rec.length;
+    }
+
+    var end = new Uint8Array(22);
+    var d3 = new DataView(end.buffer);
+    d3.setUint32(0, 0x06054b50, true);            // 中央目录结束记录
+    d3.setUint16(4, 0, true);
+    d3.setUint16(6, 0, true);
+    d3.setUint16(8, central.length, true);
+    d3.setUint16(10, central.length, true);
+    d3.setUint32(12, cdSize, true);
+    d3.setUint32(16, offset, true);
+    d3.setUint16(20, 0, true);                    // 注释长度
+
+    return new Blob(parts.concat(cd, [end]), { type: 'application/zip' });
+  }
+
+  // 顺着 FileReferences 把所有被引用的文件列出来（相对模型目录）
+  function collectModelRefs(mf) {
+    var fr = (mf && mf.FileReferences) || {};
+    var out = [];
+    function add(p) {
+      if (!p || typeof p !== 'string') return;
+      var s = p.replace(/\\/g, '/').replace(/^\.\//, '');
+      if (out.indexOf(s) < 0) out.push(s);
+    }
+    add(fr.Moc);
+    add(fr.Physics);
+    add(fr.Pose);
+    add(fr.UserData);
+    add(fr.DisplayInfo);
+    (fr.Textures || []).forEach(add);
+    (fr.Expressions || []).forEach(function (e) { if (e) add(e.File); });
+    var mg = fr.Motions || {};
+    Object.keys(mg).forEach(function (g) {
+      (mg[g] || []).forEach(function (mo) {
+        if (!mo) return;
+        add(mo.File);
+        add(mo.Sound);     // 语音也一起带上，否则动作里的台词就没了
+      });
+    });
+    return out;
+  }
+
+  // 打包当前模型，resolve 出 { blob, root, count, failed }
+  function packCurrentModel() {
+    var m = S.model;
+    if (!m) return Promise.reject(new Error('还没有选中模型'));
+    var baseUrl = 'models/' + (m.path ? m.path + '/' : '');
+    var root = (m.path ? m.path.split('/').pop() : '') || m.name || 'model';
+
+    return fetchJSON(baseUrl + m.file).then(function (mf) {
+      var rels = [m.file].concat(collectModelRefs(mf));
+      var entries = [], failed = [], done = 0;
+
+      // 顺序抓取：模型动辄几十个文件，一次性并发会把浏览器的连接池占满，
+      // 反而拖慢整体，也不好显示进度。
+      return rels.reduce(function (chain, rel) {
+        return chain.then(function () {
+          return fetch(baseUrl + rel).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.arrayBuffer();
+          }).then(function (buf) {
+            entries.push({ name: root + '/' + rel, data: new Uint8Array(buf) });
+          }).catch(function () {
+            failed.push(rel);   // 引用了但文件不存在 → 跳过，不阻断整体
+          }).then(function () {
+            done++;
+            if (els.btnDownload) els.btnDownload.textContent = '打包中 ' + done + '/' + rels.length;
+          });
+        });
+      }, Promise.resolve()).then(function () {
+        if (!entries.length) throw new Error('一个文件都没取到，检查网络或路径');
+        return { blob: buildZip(entries), root: root, count: entries.length, failed: failed };
+      });
+    });
+  }
+
+  function downloadCurrentModel() {
+    if (!S.model || S.downloading) return;
+    S.downloading = true;
+    var btn = els.btnDownload;
+    if (btn) { btn.disabled = true; btn.textContent = '打包中…'; }
+    showOverlay('正在打包 ' + modelTitle(S.model) + ' …', '按 model3.json 的引用收集文件', false, true);
+
+    packCurrentModel().then(function (res) {
+      var url = URL.createObjectURL(res.blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = res.root + '.zip';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+      S.downloading = false;
+      if (btn) { btn.disabled = false; btn.textContent = '下载模型'; }
+      showOverlay('已导出 ' + res.root + '.zip',
+        res.count + ' 个文件 · ' + (res.blob.size / 1048576).toFixed(1) + ' MB' +
+        (res.failed.length ? ' · 跳过 ' + res.failed.length + ' 个缺失文件' : ''),
+        false, false);
+      setTimeout(hideOverlay, 2200);
+    }).catch(function (e) {
+      S.downloading = false;
+      if (btn) { btn.disabled = false; btn.textContent = '下载模型'; }
+      showOverlay('打包失败', String((e && e.message) || e), true, false);
     });
   }
 
@@ -1270,6 +1743,10 @@
 
   function tickStartRecovery() {
     if (!S.playing) return;                       // 暂停时不打扰
+    // 正在换模型：这会儿 S.motions / S.l2dModel 都可能还是上一支模型的，
+    // 照常重启会把旧动作重新入队（还会把 S.primed 置回 true，干扰新模型的装载）。
+    // 新模型的启动由 switchModel 末尾的 playMotion(0) 负责。
+    if (S.busyModel) return;
     if (activeEntry() || S.pausedEntry) return;    // 队列里有东西就说明是正常状态
     if (Date.now() - lastStartAt < START_RETRY_MS) return;
     lastStartAt = Date.now();
@@ -1284,6 +1761,7 @@
     S.motionClock = 0;
     S.holdTime = 0;
     S.finished = false;
+    S._skipCount = 0;      // 真的有一个动作开始播了 → 把「连续跳过空模型」的计数清零
     clearHoldEntry();
     var mo = S.motions[index];
 
@@ -1384,7 +1862,11 @@
   // coreModel.update()/loadParameters()（把参数真正写进 drawable），
   // 所以仍需调用它，只是传真实的帧间隔 + 动作时间轴位置。
   function tickProgress(delta) {
-    if (!S.l2dModel || !S.motions.length) return;
+    if (!S.l2dModel) return;
+    // 这个模型一个动作都没有（model3.json 的 Motions 为空）：下面所有推进逻辑都依赖
+    // 「动作播完」，这里永远等不到 —— 「列表循环」开着时就会卡死在它身上。
+    // 交给 tickSkipMotionless() 把它跳过去。
+    if (!S.motions.length) { tickSkipMotionless(); return; }
     // 换模型时，新模型挂上舞台到 playMotion() 跑起来之间会隔几帧。
     // 这几帧里如果照常走下面的逻辑，就会用一个「上一个模型留下的」S.motionClock
     // 去初始化新动作队列项 —— SDK 会在首次求值时把
@@ -1430,9 +1912,22 @@
     // 让下面的分支走「定格」路径而不是「正常推进」路径。
     var holding = !!S.pausedEntry && e === S.pausedEntry;
 
-    // 队列空、也没有定格项 = 什么都没在播（动作压根没启动起来）→ 重新启动当前动作。
-    // 见 tickStartRecovery 的说明：这是「切完模型不播」的兜底。
-    if (!holding && !e && !S.pausedEntry) tickStartRecovery();
+    // ⚠️⚠️ 「这个动作已经播完了吗」必须在这里、也就是 tickStartRecovery() **之前**判定。
+    //
+    //   队列项被 SDK 摘掉的那一帧，如果先跑 tickStartRecovery，它会用同一个下标调
+    //   playMotion()，把动作重新入队并**把 S.motionClock 清零** —— 紧接着下面
+    //   「播完自动下一个」的判据 `holdTime >= dur` 就永远不成立了，动作无限重播、
+    //   再也切不走（换模型自然也一起失效）。
+    //
+    //   这个竞态一直存在，只是 1× 速度下 t 逼近 dur 的帧很多，通常是自动推进先赢，
+    //   所以看不出来；**3× 速度或低帧率下必现**（实测 3× 时每 4 秒原地重播一次，
+    //   而 1× 时能正常切走）。判据用上一帧的 holdTime 就够了：holdTime 是被
+    //   min(motionClock, dur) 夹住的，一旦到过 dur 就一直是 dur。
+    var ended = !holding && dur > 0 && S.holdTime >= dur - 0.02;
+
+    // 队列空、也没有定格项、而且**不是刚播完** = 什么都没在播（动作压根没启动起来）
+    // → 重新启动当前动作。见 tickStartRecovery 的说明：这是「切完模型不播」的兜底。
+    if (!holding && !e && !S.pausedEntry && !ended) tickStartRecovery();
 
     // 时间轴推进：暂停 / 定格时停表。
     //
@@ -1512,13 +2007,19 @@
     //     等于动作一个参数都没写进去；画面剩下的只有呼吸/物理/姿势层，
     //     于是人物停在「上一帧的姿势 + 呼吸抖动」上，时间轴却在正常走 —— 即错位。
     //   传 S.motionClock 后，两处求值用同一时刻，权重能正常淡入到 1。
+    // 每帧重设要隐藏的部件/网格：im.update() 会按绑定重算 drawable 不透明度，
+    // 把我们手工写进去的 0 覆盖掉（部件不透明度不受影响，但一起写更省心）。
+    applyHiddenLayers();
+
     try {
       im.update(dt * 1000, S.motionClock * 1000);
     } catch (err) {
       try { cm.update(); cm.loadParameters(); } catch (e2) {}
     }
 
-    // 播完自动切下一个；走到最后一个之后再回到第 1 个，形成无限循环。
+    // 播完自动切下一个。
+    //   「列表循环」开 → 当前模型全部动作播完后，切到**模型列表**里的下一个模型；
+    //   「列表循环」关 → 只在本模型内绕回第 1 个，永远不切模型。
     //
     // ⚠️⚠️ 这里绝不能再按「是否循环动作」分叉（曾经如此）：
     //     zhala_2 的 motion3.json 把 **全部 15 个动作** 都标了 Meta.Loop = true，
@@ -1527,18 +2028,66 @@
     //     看起来就是「动作播到一半突然跳走」。
     //     正确语义：**不管 Meta.Loop 是什么，都完整播一遍自己的时长再走下一个**。
     //     本 SDK build 的 _isLoop 恒为 false，动作本来就不会自己绕回，播满即止。
-    if (!holding && !S._advancing) {
+    if (!holding && !S._advancing && !S.busyModel) {
       // 队列项为空 = 动作已被 SDK 摘掉（播完）；队列项还在时按时间轴位置判断。
       // t 用 holdTime 兜底：动作播完的那一帧 holdTime 已经停在末尾。
       var t = e ? currentTime() : Math.min(S.holdTime, dur);
       var done = (!e && S.holdTime >= dur - 0.02) || (e && t >= dur - 0.02);
       if (done) {
-        S._advancing = true;
-        setTimeout(function () { S._advancing = false; }, 450);
         var next = S.current + 1;
-        playMotion(next >= S.motions.length ? 0 : next, true);
+        if (next < S.motions.length) advanceToMotion(next);
+        else if (S.autoPlayAll) advanceToNextModel();
+        else advanceToMotion(0);
       }
     }
+  }
+
+  // 播到下一个动作：加一道 450ms 的闸，挡住同一帧被重复推进
+  // （动作对象是异步加载的，队列项摘掉到下一个动作真正起来之间会隔几帧）
+  function advanceToMotion(index) {
+    S._advancing = true;
+    setTimeout(function () { S._advancing = false; }, 450);
+    playMotion(index, true);
+  }
+
+  // 「列表循环」的「列表」= 侧栏当前可见的模型（跟着搜索框走）。
+  // 到末尾绕回第一个，所以是无限轮播。
+  function nextModelInList() {
+    var list = visibleModels();
+    if (!list.length) return null;
+    var i = -1;
+    for (var k = 0; k < list.length; k++) {
+      if (S.model && list[k].key === S.model.key) { i = k; break; }
+    }
+    if (i < 0) return list[0];            // 当前模型被搜索过滤掉了 → 从列表第一个重新开始
+    return list[(i + 1) % list.length];   // 到末尾绕回第一个
+  }
+
+  // 当前模型的全部动作播完了 → 换到列表里的下一个模型。
+  // 列表里只有它自己（或搜索把别的都过滤掉了）时没得切，退回「模型内循环」，至少画面不会停。
+  function advanceToNextModel() {
+    var nm = nextModelInList();
+    if (!nm || (S.model && nm.key === S.model.key)) { advanceToMotion(0); return; }
+    switchModel(nm);
+    // ⚠️ switchModel() 的同步部分会跑 resetPlayState()，把 _advancing 清成 false；
+    //    而模型载入要几百毫秒，这期间 tickProgress 还在跑，必须补一道更长的闸，
+    //    否则会在载入中途又推进一次（S.current 这时是 -1，会推错）。
+    S._advancing = true;
+    setTimeout(function () { S._advancing = false; }, 1500);
+  }
+
+  // 极少数模型可能一个动作都没有（model3.json 里 Motions 为空）。
+  // 那种模型 tickProgress 会直接 return，永远等不到「播完」，列表循环就卡在它身上。
+  // 这里按帧轮询把它跳过去；连续跳过数超过列表长度就认输停下 ——
+  // 免得「所有模型都没动作」时在这儿无限换模型。
+  function tickSkipMotionless() {
+    if (!S.autoPlayAll || S.busyModel || !S.playing) return;
+    var list = visibleModels();
+    if (!list.length || S._skipCount >= list.length) return;
+    if (Date.now() - S._skipAt < 600) return;
+    S._skipAt = Date.now();
+    S._skipCount++;
+    advanceToNextModel();
   }
 
   // ---------- 自动依次播完全部动作 ----------
@@ -1663,23 +2212,77 @@
   }
 
   // ---------- 6. 交互 ----------
+  var ZOOM_MIN = 20, ZOOM_MAX = 400;
+  function clampZoom(p) { return Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, p)); }
+
+  // 鼠标 / 触屏 / 触控笔统一走 pointer 事件：
+  //   · 单指（或按住鼠标左键）拖动平移
+  //   · 双指捏合缩放（按两指间距的比例换算，手感与系统一致）
+  //   · 双击（鼠标）或快速双击（触屏）复位视图
+  // ⚠️ 触屏上 dblclick 不一定会触发，所以双击复位对非鼠标指针要自己判定。
   function bindStagePanZoom() {
     var stage = els.stage;
+    var pts = [];                 // 当前按下的指针 [{id,x,y}]，最多关心前两个
+    var pinchDist = 0;            // 上一帧的两指间距
+    var multiTouch = false;       // 这一轮手势里出现过两根手指（捏合过就不算双击）
+    var lastTapAt = 0, lastTapX = 0, lastTapY = 0;
+
+    function indexOfPt(id) {
+      for (var i = 0; i < pts.length; i++) if (pts[i].id === id) return i;
+      return -1;
+    }
+    // ⚠️ 按下时新增、移动时必须更新坐标 —— 只 push 不更新的话，
+    //    两指间距会永远停在「第二根手指落下那一刻」的值，捏合就没反应了。
+    function track(e, add) {
+      var i = indexOfPt(e.pointerId);
+      if (add) {
+        if (i < 0) pts.push({ id: e.pointerId, x: e.clientX, y: e.clientY });
+        else { pts[i].x = e.clientX; pts[i].y = e.clientY; }
+      } else if (i >= 0) pts.splice(i, 1);
+    }
+    function twoFingerDist() {
+      if (pts.length < 2) return 0;
+      var dx = pts[0].x - pts[1].x, dy = pts[0].y - pts[1].y;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+    function clearAll() {
+      pts.length = 0; pinchDist = 0; multiTouch = false;
+      S.dragging = false; S.dragStart = null;
+      stage.style.cursor = '';
+    }
 
     stage.addEventListener('pointerdown', function (e) {
-      if (e.button !== 0) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      track(e, true);
+      try { stage.setPointerCapture && stage.setPointerCapture(e.pointerId); } catch (err) {}
+
+      if (pts.length >= 2) {
+        // 第二根手指落下 = 进入缩放模式，立刻停止平移，否则画面会跟着跑
+        multiTouch = true;
+        S.dragging = false; S.dragStart = null;
+        stage.style.cursor = '';
+        pinchDist = twoFingerDist();
+        return;
+      }
       S.dragging = true;
       S.dragStart = { x: e.clientX, y: e.clientY, vx: S.view.x, vy: S.view.y };
-      stage.setPointerCapture && stage.setPointerCapture(e.pointerId);
       stage.style.cursor = 'grabbing';
     });
 
     stage.addEventListener('pointermove', function (e) {
+      track(e, true);
+
+      if (pts.length >= 2) {
+        var d = twoFingerDist();
+        if (pinchDist > 0 && d > 0) {
+          setZoomPercent(clampZoom((parseFloat(els.zoom.value) || 100) * (d / pinchDist)));
+        }
+        pinchDist = d;
+        return;
+      }
+
       if (S.l2dModel && !S.dragging) {
         // 视线跟随
-        var box = stageSize();
-        var nx = (e.clientX - box.left) / box.width;
-        var ny = (e.clientY - box.top) / box.height;
         try {
           var f = S.l2dModel.focus ? S.l2dModel.focus.bind(S.l2dModel) : null;
           if (f) f(e.clientX, e.clientY);
@@ -1692,20 +2295,35 @@
     });
 
     function endDrag(e) {
-      if (!S.dragging) return;
-      S.dragging = false;
-      stage.style.cursor = '';
+      track(e, false);
+      if (pts.length < 2) pinchDist = 0;
+
+      // 触屏双击复位（鼠标那边交给原生 dblclick）。
+      // 捏合过的一轮手势不算双击 —— 两根手指一起抬起时位置可能很近，会误判成双击把视图复位掉。
+      if (e.pointerType && e.pointerType !== 'mouse' && !multiTouch) {
+        var now = Date.now();
+        var moved = Math.abs(e.clientX - lastTapX) > 30 || Math.abs(e.clientY - lastTapY) > 30;
+        if (now - lastTapAt < 320 && !moved) { lastTapAt = 0; resetView(); }
+        else { lastTapAt = now; lastTapX = e.clientX; lastTapY = e.clientY; }
+      }
+
+      if (!pts.length) {
+        S.dragging = false;
+        S.dragStart = null;
+        multiTouch = false;
+        stage.style.cursor = '';
+      }
       try { stage.releasePointerCapture && stage.releasePointerCapture(e.pointerId); } catch (err) {}
     }
     stage.addEventListener('pointerup', endDrag);
     stage.addEventListener('pointercancel', endDrag);
+    // 抽屉被拉开、切到后台等情况可能收不到 pointerup，兜底清掉按下状态
+    window.addEventListener('blur', clearAll);
 
     stage.addEventListener('wheel', function (e) {
       e.preventDefault();
       var cur = parseFloat(els.zoom.value) || 100;
-      var next = cur * (e.deltaY < 0 ? 1.08 : 0.926);
-      next = Math.max(20, Math.min(400, next));
-      setZoomPercent(next);
+      setZoomPercent(clampZoom(cur * (e.deltaY < 0 ? 1.08 : 0.926)));
     }, { passive: false });
 
     stage.addEventListener('dblclick', function () { resetView(); });
@@ -1715,7 +2333,6 @@
     els.btnPlay.addEventListener('click', togglePlay);
     els.btnReset.addEventListener('click', resetView);
     els.btnFull.addEventListener('click', toggleFullscreen);
-    els.btnFull2.addEventListener('click', toggleFullscreen);
     els.btnExitFs.addEventListener('click', exitFullscreen);
 
     els.modelSearch.addEventListener('input', renderModels);
@@ -1732,6 +2349,26 @@
 
     els.showWire.addEventListener('change', function () { toggleWire(els.showWire.checked); });
 
+    // 「列表循环」：开 → 当前模型全部动作播完后自动切到列表里的下一个模型；
+    // 关 → 只在本模型内循环动作，不切模型。
+    // 不需要在切换开关时立刻做别的事：开着的时候等「播完」自然会切，
+    // 关着的时候本来就一直在本模型内循环，两种状态下画面都不会停。
+    els.listLoop.addEventListener('change', function () {
+      S.autoPlayAll = els.listLoop.checked;
+      S._skipCount = 0;   // 重新允许跳过「一个动作都没有」的模型
+      saveState();
+    });
+
+    els.btnDownload.addEventListener('click', downloadCurrentModel);
+
+    // 手机端抽屉：顶栏汉堡开关、面板里的 × 、遮罩、选中模型后自动收起
+    if (els.btnNav) els.btnNav.addEventListener('click', function () { setNav(!S.navOpen); });
+    if (els.btnNavClose) els.btnNavClose.addEventListener('click', function () { setNav(false); });
+    if (els.navScrim) els.navScrim.addEventListener('click', function () { setNav(false); });
+    els.modelList.addEventListener('click', function () {
+      if (mqMobile.matches) setNav(false);
+    });
+
     var themeBtns = els.stageSegBtns;
     for (var ti = 0; ti < themeBtns.length; ti++) {
       (function (btn) {
@@ -1747,18 +2384,86 @@
       else if (e.key === 'r' || e.key === 'R') userPlay(S.current);
       else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
       else if (e.key === 't' || e.key === 'T') cycleStageTheme();
-      // 浏览器原生全屏由 Esc 自己处理；这里兜底「请求被拒、只剩 CSS 全屏」的情况
-      else if (e.key === 'Escape' && S.fullscreen) exitFullscreen();
+      // 浏览器原生全屏由 Esc 自己处理；这里兜底「请求被拒、只剩 CSS 全屏」的情况。
+      // 抽屉开着时 Esc 先收抽屉，不要顺手把全屏也退掉。
+      else if (e.key === 'Escape') {
+        if (S.navOpen) setNav(false);
+        else if (S.fullscreen) exitFullscreen();
+      }
     });
 
-    window.addEventListener('resize', relayout);
+    bindViewport();
   }
 
-  // 舞台尺寸变了（窗口缩放 / 进出全屏）之后重新排布：
+  // ============================================================
+  // 多端适配
+  // ============================================================
+  // 断点必须和 CSS 里的媒体查询保持一致（含「矮视口」那一条）：
+  // 横屏手机宽度够但高度只有 390px 左右，同样要按手机布局走抽屉。
+  var mqMobile = window.matchMedia('(max-width: 767px), (max-height: 520px) and (max-width: 1023px)');
+  var mqCoarse = window.matchMedia('(hover: none), (pointer: coarse)');
+
+  // 手机端把侧栏当抽屉用：.app.nav-open 时滑出。
+  // 非手机断点下永远保持收起，免得横竖屏来回切换时留下一个半开的抽屉。
+  function setNav(open) {
+    if (!mqMobile.matches) open = false;
+    S.navOpen = !!open;
+    appEl.classList.toggle('nav-open', S.navOpen);
+    if (els.btnNav) els.btnNav.setAttribute('aria-expanded', S.navOpen ? 'true' : 'false');
+    if (els.navScrim) els.navScrim.setAttribute('aria-hidden', S.navOpen ? 'false' : 'true');
+  }
+
+  // 提示文案按输入方式换：触屏没有滚轮，说「滚轮缩放」等于没说
+  function updateHintText() {
+    if (!els.stageHint) return;
+    els.stageHint.textContent = mqCoarse.matches
+      ? '单指拖动移动 · 双指缩放 · 双击复位'
+      : '按住拖动可移动位置 · 滚轮缩放 · 双击复位 · 右上角全屏';
+  }
+
+  // 尺寸变化的统一入口。窗口 resize 不够用：手机地址栏收放、横竖屏切换、
+  // 侧栏抽屉开合都会改变舞台尺寸，所以直接拿 ResizeObserver 盯住舞台本身。
+  var relayoutPending = 0;
+  function scheduleRelayout() {
+    if (relayoutPending) return;
+    relayoutPending = requestAnimationFrame(function () {
+      relayoutPending = 0;
+      relayout();
+    });
+  }
+
+  function bindViewport() {
+    updateHintText();
+    var onMq = function () { setNav(false); scheduleRelayout(); };
+    if (mqMobile.addEventListener) mqMobile.addEventListener('change', onMq);
+    else if (mqMobile.addListener) mqMobile.addListener(onMq);
+
+    if (mqCoarse.addEventListener) mqCoarse.addEventListener('change', updateHintText);
+    else if (mqCoarse.addListener) mqCoarse.addListener(updateHintText);
+
+    if (window.ResizeObserver) {
+      try { new ResizeObserver(scheduleRelayout).observe(els.stage); } catch (e) {}
+    }
+    window.addEventListener('resize', scheduleRelayout);
+    window.addEventListener('orientationchange', function () {
+      // 横竖屏切换后浏览器要过一会儿才把新尺寸算出来，隔两拍再量一次
+      scheduleRelayout();
+      setTimeout(scheduleRelayout, 260);
+    });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', scheduleRelayout);
+    }
+  }
+
+  // 舞台尺寸变了（窗口缩放 / 进出全屏 / 横竖屏 / 地址栏收放）之后重新排布：
   // 渲染器跟着改尺寸，并按原来的缩放百分比重新适配模型。
+  // 尺寸没变就直接返回 —— ResizeObserver 会因抽屉动画等反复触发，不做守卫会白跑一堆。
+  var lastStageBox = { w: 0, h: 0 };
   function relayout() {
-    var keep = parseFloat(els.zoom.value) || 100;
     var box = stageSize();
+    if (Math.abs(box.w - lastStageBox.w) < 0.5 && Math.abs(box.h - lastStageBox.h) < 0.5) return;
+    lastStageBox = { w: box.w, h: box.h };
+    var keep = parseFloat(els.zoom.value) || 100;
     if (S.app) S.app.renderer.resize(box.w, box.h);
     if (S.wireOn) drawWire(S.wire);
     setZoomPercent(keep);
@@ -1801,6 +2506,7 @@
 
   function enterFullscreen() {
     S.fullscreen = true;
+    setNav(false);            // 抽屉开着进全屏，退出时会莫名其妙地又冒出来
     appEl.classList.add('fs');
     var el = document.documentElement;
     var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
@@ -1932,9 +2638,20 @@
     }
     S.collapsed = (st && st.collapsed && typeof st.collapsed === 'object') ? st.collapsed : {};
 
+    // 「列表循环」开关：老用户没存过这个字段时保持默认（开）。
+    // 注意这里只是把勾选状态摆正，不要去触发 change 回调（程序化改 .checked 本来也不触发）。
+    if (st && typeof st.listLoop === 'boolean') {
+      S.autoPlayAll = st.listLoop;
+      els.listLoop.checked = st.listLoop;
+    }
+
     showOverlay('正在扫描模型…', '', false, true);
 
-    discoverModels().then(function (list) {
+    // ⚠️ readManifest() 以前从来没被调用过 —— boot() 直接从 discoverModels() 开始，
+    //    于是 models/manifest.json 里的 alias / motions 一直是死配置。
+    //    必须在这里、discoverModels() 之前读：switchModel() 一被调用就会进
+    //    loadIntoStage()，而那里要立刻用到 hiddenParts / hiddenDrawables。
+    readManifest().then(discoverModels).then(function (list) {
       S.models = list;
       if (!S.models.length) {
         showOverlay(
@@ -2055,7 +2772,38 @@
               entryWeight: e ? e.getStateWeight() : null,
               tickerStarted: S.app.ticker.started
             };
-          }
+          },
+          // 当前模型的隐藏清单，以及手动重设隐藏图层（回归测试用：自动化脚本会关掉
+          // ticker 后单独出图，那时 tickProgress 不再跑，需要能手动触发一次）
+          hidden: function () {
+            return {
+              parts: S.hiddenParts.slice(),
+              drawables: S.hiddenDrawables.slice(),
+              applied: S._hideCache ? { parts: S._hideCache.partIdx.slice(), drawables: S._hideCache.drawIdx.slice() } : null
+            };
+          },
+          applyHidden: function () { applyHiddenLayers(); return 1; },
+          // 「列表循环」的诊断：侧栏可见列表的顺序、当前在第几个、下一个该是谁
+          listInfo: function () {
+            var list = visibleModels();
+            var nm = nextModelInList();
+            var idx = -1;
+            for (var i = 0; i < list.length; i++) {
+              if (S.model && list[i].key === S.model.key) { idx = i; break; }
+            }
+            return {
+              count: list.length,
+              index: idx,
+              next: nm ? nm.key : null,
+              keys: list.map(function (m) { return m.key; }),
+              skipCount: S._skipCount,
+              autoPlayAll: S.autoPlayAll
+            };
+          },
+          // 打包下载：回归测试要拿真实字节去校验 zip 结构（签名 / CRC / 中央目录），
+          // 所以把纯打包函数暴露出来；download 那层会直接触发浏览器下载，不适合自动化。
+          pack: function () { return packCurrentModel(); },
+          download: function () { downloadCurrentModel(); return 1; }
         };
       } catch (e) { /* 调试钩子失败不影响页面 */ }
     }).catch(function (err) {
