@@ -116,11 +116,11 @@ python build_index.py
 | 播放控制 | 播放 / 暂停 |
 | 速度 | 0.1× ~ 3× 变速播放 |
 | 缩放 | 20% ~ 400%，也可用滚轮；拖动画面可平移，双击复位 |
-| 深色舞台 | 切换舞台背景，便于查看浅色或深色角色 |
+| 舞台背景 | 顶栏三档切换：**浅色 / 深色 / 黑色**。黑色舞台背景最干净，看模型轮廓、透明边缘和发光特效时最清楚 |
 | **全屏播放** | 顶栏图标或底部「全屏播放」按钮，一键让整个屏幕只剩模型（浏览器原生全屏 + 隐藏全部面板） |
 | GitHub 图标 | 顶栏右上角，点击打开本仓库 |
 | 显示网格 | 叠加参考网格，方便定位 |
-| 快捷键 | `←` `→` 跳到上/下一个动作、`空格` 播放/暂停、`R` 重播当前、`F` 全屏、`Esc` 退出全屏 |
+| 快捷键 | `←` `→` 跳到上/下一个动作、`空格` 播放/暂停、`R` 重播当前、`T` 循环切换舞台背景、`F` 全屏、`Esc` 退出全屏 |
 
 舞台左上角的信息条会显示当前是第几个动作、叫什么名字、多长。
 
@@ -128,7 +128,10 @@ python build_index.py
 
 - **暂停 / 拖动定位**后按「播放」是**接着播**，不会跳回开头。
 - **非循环动作播完后会停在最后一帧**（不会弹回初始姿势），稍后自动切到下一个动作。
-- **循环动作**（`Idle` 等）没有「播完」的瞬间，按固定停留时长（6 秒）继续往下走。
+- **每个动作都完整播一遍自己的时长**，然后自动切到下一个 —— 这与 `motion3.json` 里的
+  `Meta.Loop` 无关。注意 `Meta.Loop = true` **不代表**这个动作要循环播放，
+  它只是导出器的标记；真正的循环播放（如 `Idle`）由页面自己维护（见下文 SDK 坑 2）。
+- 舞台背景三档（浅色 / 深色 / 黑色）会记在浏览器里，下次打开自动恢复。
 - 换模型后一律从第 1 个动作重新开始。
 - 全屏时顶栏、侧栏、底部控制条、信息条、操作提示全部隐藏，舞台上只剩模型；
   右上角有一个几乎透明的退出按钮（鼠标移上去才显形），也可以按 `Esc`。
@@ -152,12 +155,26 @@ http://localhost:8000/?model=Azue%20Lane(JP)/zhala_2/zhala_2.model3.json
 node _regress.js
 ```
 
-它会起一个本地静态服务 + 无头 Chrome，逐项验证：动作列表确实已删除、GitHub 图标、
+它会起一个本地静态服务 + 无头 Chrome，逐项验证（当前 **74 项**）：动作列表确实已删除、GitHub 图标、
 全屏（含「原生全屏被拒绝时 CSS 全屏仍生效」这条分支）、模型能自动依次播完全部动作并绕回第 1 个、
-暂停/续播/定格不抖动。**判据是队列项权重 `entry.getStateWeight()` 必须收敛到 1**，
-不能只看「参数变化数」—— 权重为 0 时参数本来就不变，会假通过。
+暂停/续播/定格不抖动、三档舞台背景的切换与持久化、SDK 的自动 Idle 确实已关闭、
+以及**播放速度与真实时间一致**。
 
-### ⚠️ 三个必须知道的 SDK 坑
+**主判据是队列项权重 `entry.getStateWeight()` 必须收敛到 1**，
+不能只看「参数变化数」—— 权重为 0 时参数本来就不变，「错位」和「正确定格」在这个指标上长得一模一样，会假通过。
+
+> ⚠️ **不要用截图判断舞台背景色。** 无头 Chrome（swiftshader）在 `Page.captureScreenshot` 时会把
+> WebGL canvas 的**透明区域合成为黑色**，于是浅色 / 深色 / 黑色三档的舞台在截图里看起来全是黑的。
+> 这是截图环节的假象，页面本身没问题 —— 想验证背景色请读 `getComputedStyle(stage).backgroundImage`，
+> 或把 `#live2d-canvas-host` 隐藏后再截图。
+> 同理，`gl.readPixels` / `ctx.drawImage(canvas)` 在无头 Chrome 里读到的是过期缓冲，也不可靠。
+
+> ⚠️ **不要用固定 `sleep` 断言「播放中权重 = 1」。** 无头 Chrome 的 rAF 比墙钟快，
+> 5 秒的动作可能 2 秒就播完并摘掉队列项，此时 `entry === null` 是「播完了」而不是「错位」。
+> 要**逐帧采样整个播放过程**，记录**最大权重**（应到 1）与**最大时钟**（应 > 0.5），
+> 且采样循环必须有硬上限（如 3000 帧），否则永不 resolve 会卡死整套测试。
+
+### ⚠️ 五个必须知道的 SDK 坑
 
 改 `index.html` 里播放相关代码前请务必了解，否则很容易复现「错位」「抖动」「循环不动」「切完模型不播」：
 
@@ -185,10 +202,15 @@ im.update(dt * 1000, S.motionClock * 1000);   // ← 第二个参数不能传 0
 
 因此页面自己维护了循环：`S.motions[i].loop` 直接来自 `motion3.json` 的 `Meta.Loop`，
 **它是唯一权威来源**。本页面固定处于「依次播完全部动作」模式，
-非循环动作播完后由 `tickProgress` 自动 `playMotion` 下一个（到末尾绕回第 1 个），
-循环动作则由 `LOOP_DWELL`（6 秒）计时推走。
+每个动作播完自己的时长后由 `tickProgress` 自动 `playMotion` 下一个（到末尾绕回第 1 个）。
 
 > 相应地，`isCurrentLoop()` 里 **不要**把 `motion.isLoop()` 当主要判据 —— 它恒为 `false`。
+> 它的唯一用途是「别给循环动作挂定格项」。
+
+> ⚠️ **`Meta.Loop = true` 不等于「要循环播」。** 有些导出器会给**全部**动作都标上
+> `Meta.Loop = true`（`zhala_2` 的 15 个动作全中招），此时若按「是循环动作 → 用固定停留时长推走」
+> 处理，`wedding`(31.17s) / `login`(22.33s) / `home`(20.17s) 会在第 6 秒被硬切。
+> 正确语义：**不管 `Meta.Loop` 是什么，都完整播一遍自己的时长再走下一个。**
 
 **3. 动作对象是异步加载的，切完模型不能只启动一次。**
 
@@ -202,6 +224,50 @@ im.update(dt * 1000, S.motionClock * 1000);   // ← 第二个参数不能传 0
 
 因此页面用 `tickStartRecovery()` 做兜底：只要发现**队列里既没有正在播的动作、也没有定格项**，
 就每 300ms 重新启动一次当前动作，**不设次数上限**。动作一变得可用就自动接上。
+
+**4. SDK 会在动作队列空掉时自己随机起一个 Idle 动作，必须关掉。**
+
+`MotionManager.update()` 里写死了这么一句：
+
+```js
+this.state.shouldRequestIdleMotion() && this.startRandomMotion(this.groups.idle, IDLE)
+// shouldRequestIdleMotion() { return currentGroup === undefined && reservedIdleGroup === undefined }
+```
+
+也就是说**只要队列空了，SDK 就自己从 Idle 组随机起一个动作**。它插入的队列项 `startTime`
+是在首次求值时写成「当时的 elapsed」的，于是 `currentTime() = elapsed - startTime` 恒为 0 ——
+页面永远等不到「播完」。表现就是：`zhala_2` 的 `login`(22.33s) 播完后，
+每 12 秒（正好是它 Idle 的时长）自己重启一次，永远停在第一个动作。
+
+关掉它需要**三重保险**，缺一个都可能漏：
+
+```js
+var NO_IDLE_GROUP = '__no_auto_idle__';
+
+function disableAutoIdle(mm) {
+  try { mm.stopAllMotions(); } catch (e) {}
+  mm.groups && (mm.groups.idle = NO_IDLE_GROUP);        // 指向一个不存在的分组
+  mm.startRandomMotion = function () { return false; };  // 直接封掉入口
+}
+// 装载时还要传 idleMotionGroup: NO_IDLE_GROUP
+```
+
+> ⚠️ **`idleMotionGroup` 传空串等于没传。** SDK 写的是 `(t?.idleMotionGroup) && (...)`，
+> **空串是 falsy**，会直接跳过赋值。必须传一个「非空、且不存在于任何模型动作分组里」的哨兵值。
+
+**5. PIXI ticker 回调收到的 `delta` 已经按 60fps 归一化过了，换算成秒是 `delta / 60`。**
+
+```js
+// TARGET_FPMS = 0.06 = 1 / 16.667
+this.deltaMS   = t - lastTime;              // 真实帧间隔（毫秒）
+this.deltaTime = this.deltaMS * TARGET_FPMS; // 归一化后的帧数
+n.emit(this.deltaTime);                      // ← 回调收到的就是这个
+```
+
+所以 `dt = delta / 60`，**绝不能除以 `ticker.FPS`**。`ticker.FPS` 是「实测帧率」
+（`1000 / elapsedMS`），在 144Hz / 165Hz / 240Hz 屏上就是 144 / 165 / 240，
+拿它当除数会让动作按 `60 / 实测帧率` 倍**慢放** —— 屏幕越流畅、动作越慢。
+这个 bug 在 60Hz 屏上完全看不出来，只在高刷屏上暴露。
 
 ## 目录结构
 

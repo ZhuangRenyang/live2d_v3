@@ -177,6 +177,8 @@
   .stage.dark{
     background: radial-gradient(1100px 620px at 50% 8%, #2b3444 0%, #1e2531 48%, #141a23 100%);
   }
+  /* 纯黑舞台：背景最干净，看模型轮廓、透明边缘和发光特效时最清楚 */
+  .stage.black{ background:#000; }
   #live2d-canvas-host{ position:absolute; inset:0; }
   #live2d-canvas-host canvas{ display:block; }
 
@@ -187,6 +189,7 @@
     backdrop-filter:blur(6px); white-space:nowrap;
   }
   .stage.dark .stage-hint{ background:rgba(20,26,35,.66); color:#95a1b5; }
+  .stage.black .stage-hint{ background:rgba(255,255,255,.08); color:#9aa4b2; }
 
   .badge{
     position:absolute; left:14px; top:12px; pointer-events:none;
@@ -195,6 +198,13 @@
     box-shadow:var(--shadow-sm);
   }
   .stage.dark .badge{ background:rgba(20,26,35,.72); border-color:#333d4d; }
+  .stage.black .badge{ background:rgba(255,255,255,.07); border-color:#262b33; }
+  /* ⚠️ 浮层底色变深之后文字必须跟着变亮：.b1 继承的是 --text（深色），
+     在深底上等于深字压深底，一个字都看不见。 */
+  .stage.dark .badge .b1,
+  .stage.black .badge .b1{ color:#e8edf5; }
+  .stage.dark .badge .b2,
+  .stage.black .badge .b2{ color:#95a1b5; }
   .badge .b1{ font-size:12.5px; font-weight:650; }
   .badge .b2{ font-size:11px; color:var(--text-faint); margin-top:2px; }
 
@@ -204,6 +214,11 @@
     background:rgba(242,244,248,.9); backdrop-filter:blur(2px); z-index:5;
   }
   .stage.dark .overlay{ background:rgba(20,26,35,.88); }
+  .stage.black .overlay{ background:rgba(0,0,0,.9); }
+  .stage.dark .overlay .msg,
+  .stage.black .overlay .msg{ color:#e8edf5; }
+  .stage.dark .overlay .detail,
+  .stage.black .overlay .detail{ color:#95a1b5; }
   .overlay.hide{ display:none; }
   .overlay .msg{ font-size:13px; font-weight:600; max-width:520px; line-height:1.65; }
   .overlay .detail{
@@ -298,6 +313,21 @@
     background:rgba(20,26,35,.55); color:#c7d0de; border-color:rgba(160,175,200,.28);
   }
   .stage.dark .exit-fs:hover{ background:rgba(20,26,35,.94); }
+  .stage.black .exit-fs{
+    background:rgba(255,255,255,.09); color:#c7d0de; border-color:rgba(160,175,200,.24);
+  }
+  .stage.black .exit-fs:hover{ background:rgba(255,255,255,.2); }
+
+  /* 舞台主题选择器：浅色 / 深色 / 黑色 三选一 */
+  .stage-seg{ flex:0 0 auto; }
+  .stage-seg button{ display:flex; align-items:center; gap:6px; }
+  .stage-seg .sw-dot{
+    width:11px; height:11px; border-radius:50%; flex:0 0 11px;
+    border:1px solid rgba(120,132,152,.5);
+  }
+  .stage-seg button[data-stage="light"] .sw-dot{ background:#f7f9fc; }
+  .stage-seg button[data-stage="dark"]  .sw-dot{ background:#1e2531; }
+  .stage-seg button[data-stage="black"] .sw-dot{ background:#000; }
 
   @media (max-width:860px){
     .sidebar{ width:230px; flex-basis:230px; }
@@ -320,7 +350,11 @@
         <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
       </svg>
     </a>
-    <button class="tbtn" id="btnTheme">深色舞台</button>
+    <div class="seg stage-seg" id="stageSeg" role="group" aria-label="舞台背景">
+      <button type="button" data-stage="light" class="on" title="浅色舞台"><i class="sw-dot"></i>浅色</button>
+      <button type="button" data-stage="dark"  title="深色舞台（快捷键 T 循环切换）"><i class="sw-dot"></i>深色</button>
+      <button type="button" data-stage="black" title="黑色舞台（快捷键 T 循环切换）"><i class="sw-dot"></i>黑色</button>
+    </div>
     <button class="icon-btn" id="btnFull" title="全屏播放（整个屏幕只显示模型）">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
            stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -435,7 +469,8 @@
     zoomVal:      document.getElementById('zoomVal'),
     showWire:     document.getElementById('showWire'),
     btnReset:     document.getElementById('btnReset'),
-    btnTheme:     document.getElementById('btnTheme'),
+    stageSeg:     document.getElementById('stageSeg'),
+    stageSegBtns: document.querySelectorAll('#stageSeg button'),
     btnFull:      document.getElementById('btnFull'),
     btnFull2:     document.getElementById('btnFull2'),
     btnExitFs:    document.getElementById('btnExitFs'),
@@ -470,6 +505,7 @@
     pendingModel: null,  // 载入中又点了别的模型时暂存下来，载完再切过去
     autoPlayAll: true,   // 固定开启：模型载入后从第 1 个动作依次播完全部，再从头循环
     fullscreen: false,   // 是否处于「全屏只显示模型」模式
+    stageTheme: 'light', // 舞台背景：'light' | 'dark' | 'black'
     primed: false        // 动作队列是否已由 playMotion 初始化好（见 tickProgress 开头）
   };
 
@@ -509,7 +545,7 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         model: S.model ? S.model.key : null,
-        dark: els.stage.classList.contains('dark'),
+        stage: S.stageTheme,      // 'light' | 'dark' | 'black'
         speed: S.speed,
         collapsed: S.collapsed
       }));
@@ -925,7 +961,10 @@
       return PIXI.live2d.Live2DModel.from(manifestUrl, {
         autoInteract: false,
         autoUpdate: true,
-        idleMotionGroup: '',
+        // ⚠️ 这个值必须「非空且不存在于任何模型的动作分组里」，见下面 disableAutoIdle 的说明。
+        //    之前写的是空串 '' —— 空串是 falsy，SDK 的 `(t?.idleMotionGroup) && ...` 直接跳过，
+        //    等于没设，SDK 的自动 Idle 一直在偷偷运行。
+        idleMotionGroup: NO_IDLE_GROUP,
         motionPreload: 'ALL'
       }).then(function (model) {
         S.l2dModel = model;
@@ -938,10 +977,8 @@
         // 用错误的帧间隔覆盖参数）
         model.autoUpdate = false;
 
-        // 关闭自动默认动作，交由我们控制
-        if (model.internalModel && model.internalModel.motionManager) {
-          model.internalModel.motionManager.stopAllMotions();
-        }
+        // 关闭 SDK 的自动 Idle 动作，动作序列完全由页面控制
+        disableAutoIdle(model.internalModel && model.internalModel.motionManager);
 
         // 眼部跟随鼠标
         model.on('pointermove', function () {});
@@ -949,6 +986,48 @@
         resolve(model);
       }).catch(reject);
     });
+  }
+
+  // ---------- 关闭 SDK 的自动 Idle 动作 ----------
+  //
+  // ⚠️⚠️ 这是「动作播到一半被顶掉 / 自动连播卡住」的根因，动这块代码前务必读完。
+  //
+  // assets/cubism4.min.js 里 MotionManager.update() 长这样：
+  //
+  //   update(t, e) {
+  //     return this.isFinished() && (
+  //         this.playing && (this.playing = false, this.emit("motionFinish")),
+  //         this.state.shouldOverrideExpression() && this.expressionManager?.restoreExpression(),
+  //         this.state.complete(),
+  //         this.state.shouldRequestIdleMotion() && this.startRandomMotion(this.groups.idle, IDLE)
+  //       ), this.updateParameters(t, e)
+  //   }
+  //
+  // 而 `shouldRequestIdleMotion() { return currentGroup === undefined && reservedIdleGroup === undefined }`
+  // —— 只要**动作队列空了**，SDK 就会自己从 Idle 组随机起一个动作。
+  //
+  // 后果（实测）：我们让动作按真实时长播完、正要切下一个时，SDK 已经抢先塞进一个
+  // **我们从未配置过**的队列项。它的 startTime 由 SDK 在首次求值时写成「当时的 elapsed」，
+  // 于是 currentTime() = elapsed - startTime 恒等于 0，页面以为动作才刚开始 ——
+  // 「播完自动下一个」永远不触发，画面就在 Idle 上无限重播。
+  // zhala_2 表现最典型：login(22.33s) 播完后，每 12 秒（Idle 的时长）自己重启一次。
+  //
+  // 关掉的开关是 idleMotionGroup（在 Live2DModel.from 的选项里），但**不能传空串**：
+  // SDK 写的是 `(t?.idleMotionGroup) && (this.groups.idle = t.idleMotionGroup)`，
+  // 空串是 falsy，等于没传 —— 之前就是这么写的，所以一直没生效。
+  // 传一个不可能存在的组名即可：startRandomMotion 里 `const i = this.definitions[组名]`
+  // 取不到就直接 return false，不会抛异常。
+  var NO_IDLE_GROUP = '__no_auto_idle__';
+
+  function disableAutoIdle(mm) {
+    if (!mm) return;
+    try { mm.stopAllMotions(); } catch (e) {}
+    try {
+      // 双保险：万一 idleMotionGroup 那条路没走到（例如 SDK 版本变了、init 参数换了），
+      // 这里直接把「随机起动作」这个入口封掉。页面自己按顺序播，不需要 SDK 插手。
+      mm.groups && (mm.groups.idle = NO_IDLE_GROUP);
+      mm.startRandomMotion = function () { return Promise.resolve(false); };
+    } catch (e) {}
   }
 
   // ---------- 4. 舞台与缩放 ----------
@@ -1150,17 +1229,17 @@
     return (S.motions[S.current] || {}).duration || 0;
   }
 
-  // 当前动作是否为循环动作。
+  // 当前动作是否标了 Meta.Loop。
   //
   // ⚠️ 不要用 e._motion.isLoop() 当唯一判据：实测 Cubism4MotionManager 载入后
   //    动作对象的 _isLoop 恒为 false（即使 motion3.json 里写了 Meta.Loop = true），
   //    因为 _isLoop 是「解析时」才写进去的，而 SDK 在 preload/loadMotion 的快路径下
-  //    并不会把 Meta.Loop 带过来。曾经这里优先读 SDK 的 isLoop()，
-  //    于是所有循环动作都被当成「非循环」：
-  //      · 连播时循环动作不会被 LOOP_DWELL 计时推走 → 永远卡在 Idle 上；
-  //      · 循环动作绕回起点那一瞬 isFinished() 为真时会被误判成「播完了」而停表。
+  //    并不会把 Meta.Loop 带过来。
   //    真相来源是我们自己 scan 出来的 S.motions[i].loop（直接读 motion3.json 的 Meta.Loop）。
-  //    所以优先用 SDK 的值，只有在它明确为 true 时才采信；否则回落到本地标记。
+  //    所以优先用本地标记，只有在它没给出结论时才回落到 SDK 的值。
+  //
+  // 注意：这个函数现在的唯一用途是「别给循环动作挂定格项」（见 tickProgress）。
+  //      自动推进**不再**区分是否循环 —— 不管 Meta.Loop 是什么，都完整播一遍真实时长。
   function isCurrentLoop() {
     var mo = S.motions[S.current];
     if (mo && mo.loop) return true;          // 本地标记是权威（来自 Meta.Loop）
@@ -1206,7 +1285,6 @@
     S.holdTime = 0;
     S.finished = false;
     clearHoldEntry();
-    loopEnterIndex = -1;   // 连播的「循环动作停留计时」随动作切换重置
     var mo = S.motions[index];
 
     var mm = motionManager();
@@ -1233,10 +1311,18 @@
         mm.queueManager._doUpdateTime = 0;
         mm.playing = true;
       }
-      // 这里刻意不做「随机播一个同组动作」的兜底：那会打乱「依次播完全部动作」的顺序，
-      // 信息条上的序号也会和实际在播的动作对不上。拿不到动作对象时交给 tickStartRecovery。
-    } else if (S.l2dModel) {
-      try { S.l2dModel.motion(mo.group || '', 0).catch(function () {}); } catch (e) {}
+      // 拿不到动作对象时**什么都不做**，交给 tickStartRecovery 每 300ms 重试。
+      //
+      // ⚠️ 这里曾经写了一个 `S.l2dModel.motion(mo.group || '', 0)` 的兜底，必须保持删除：
+      //   它走的是 SDK 的 MotionManager.startMotion(group, index) —— 那条路会把
+      //   `state.reserve(group, index, priority)` 占上，并且**异步**插入一个
+      //   我们完全没配置过的队列项（startTime/endTime 都由 SDK 自己写）。
+      //   后果有两层：
+      //     · 那个队列项的 startTime 是「当时的 elapsed」，我们算出来的动作进度会错位；
+      //     · 更要命的是 reserve 被占住之后，下一次 playMotion 再调它会被判
+      //       「Motion is already reserved.」直接返回 false —— 于是队列一直空着，
+      //       页面停在「playing=true 但什么都没播」的状态，最后被定格分支误判成播完，
+      //       连恢复逻辑都因为 playing=false 而失效（实测 biaoqiang 就是这么卡住的）。
     }
 
     lastStartAt = Date.now();   // 给 tickStartRecovery 一个节流基准
@@ -1316,12 +1402,22 @@
     if (!im || !mm || !mm.queueManager || !cm) return;
 
     var dur = currentDuration();
+    // 时长读不到的动作用兜底值，否则「播完自动下一个」永远不触发，会卡死在这一个动作上
+    if (!(dur > 0)) dur = FALLBACK_DUR;
 
-    // 帧间隔（秒）。PIXI ticker 回调给的是「帧数」，需除以目标帧率。
+    // 帧间隔（秒）。
+    //
+    // ⚠️ PIXI 的 ticker 回调给的是 deltaTime —— **已经按 60fps 归一化过的帧数**：
+    //      this.deltaMS   = 真实帧间隔（毫秒）
+    //      this.deltaTime = this.deltaMS * TARGET_FPMS   (TARGET_FPMS = 0.06 = 1/16.667)
+    //      n.emit(this.deltaTime)
+    //    所以换算成秒是 delta / 60，**不能**除以 ticker.FPS。
+    //    ticker.FPS 是「实测帧率」（1000 / elapsedMS），高刷屏上会是 144 / 165 / 240：
+    //    拿它当除数会让动作按 (60 / 实测帧率) 倍慢放 —— 屏幕越流畅、动作越慢。
+    //    这个 bug 在 60Hz 屏上完全看不出来，只在 144Hz 以上的机器上暴露。
     var dt;
     if (typeof delta === 'number') {
-      var fps = (S.app && S.app.ticker && S.app.ticker.FPS) || 60;
-      dt = delta / (fps > 1 ? fps : 60);
+      dt = delta / 60;
     } else {
       dt = (S.app && S.app.ticker && S.app.ticker.deltaMS ? S.app.ticker.deltaMS / 1000 : 1 / 60);
     }
@@ -1338,8 +1434,18 @@
     // 见 tickStartRecovery 的说明：这是「切完模型不播」的兜底。
     if (!holding && !e && !S.pausedEntry) tickStartRecovery();
 
-    // 时间轴推进：暂停 / 定格时停表
-    if (!holding && e && S.playing) {
+    // 时间轴推进：暂停 / 定格时停表。
+    //
+    // ⚠️ 这里有两件事必须同时成立，否则会出现「卡死」或「莫名跳过某个动作」：
+    //
+    //   1) 动作在末尾被 SDK 摘出队列之后，时钟还得继续走到 holdTime >= dur，
+    //      否则「播完自动下一个」的判据永远不成立。所以这里**不要求 e 非空**。
+    //   2) 但如果队列空着、而且时钟离末尾还远，那说明动作**压根没启动起来**
+    //      （动作对象还在异步加载 / SDK 的 state.reserve 被上一支动作占着）。
+    //      这时绝不能推进时钟 —— 否则 holdTime 会一路涨到 dur，被误判成「播完了」
+    //      而直接跳到下一个动作。这种状态留给 tickStartRecovery 去重启当前动作。
+    var stalled = !e && dur > 0 && S.holdTime < dur - 0.05;
+    if (!holding && S.playing && !stalled) {
       S.motionClock += dt * S.speed;
       S.holdTime = Math.min(S.motionClock, dur > 0 ? dur : S.motionClock);
     }
@@ -1356,23 +1462,27 @@
       var qt = mm.queueManager;
       qt._doUpdateTime = S.motionClock;
       try { qt.doUpdateMotion(cm, S.motionClock); } catch (err) {}
-    } else if (S.holdTime > 0 && !isCurrentLoop()) {
+    } else if (S.holdTime > 0 && !isCurrentLoop() && dur > 0 && S.holdTime >= dur - 0.05) {
       // 非循环动作播完后 SDK 会把队列项移除，此时把最后一帧续上，
       // 避免参数回到初始姿势。
       // 注意：这里必须「只入队一次」，否则每帧重新 startMotion 会让动作
       // 在起始姿势与末帧之间反复横跳，表现为人物持续快速抖动。
       //
       // 走到这个分支说明「原本在播、现在队列空了」= 动作自然播完。
-      // 记下 finished，并把播放状态收掉：画面已定格，再显示「暂停中」会让用户困惑，
-      // 而且此时按播放应当重播，若 S.playing 仍为 true 就会被误判成「暂停」。
+      // ⚠️ 必须同时满足 holdTime >= dur - 0.05（真的走到末尾了）。
+      //    少了这个条件，「动作没启动起来」也会被当成「播完了」：
+      //    那时 mountHoldEntry 因为拿不到动作对象而直接 return，
+      //    于是 S.playing 被置成 false、队列又是空的 —— 页面彻底停住，
+      //    连 tickStartRecovery 都被 `if (!S.playing) return` 挡住，再也救不回来。
       S.finished = true;
-      S.playing = false;
-      setPlayIcon();
       S.motionClock = S.holdTime;
       mountHoldEntry(mm, cm, S.holdTime);
+      // 只有定格项真的挂上了才停表；挂不上就保持 playing=true，交给 tickStartRecovery
+      if (S.pausedEntry) { S.playing = false; setPlayIcon(); }
     }
-    // 循环动作（Idle 之类）不会自然播完，这里不做处理：
-    // 页面固定处于「依次播完全部动作」模式，循环动作由 tickPlayAllLoopDwell 按停留时长推走。
+    // 标了 Meta.Loop 的动作（zhala_2 是全部动作都标了）在这里不挂定格项 ——
+    // 挂了就会变成 holding，反过来挡住下面「播完自动下一个」的推进。
+    // 它们和普通动作一样：时钟走到 dur 就切下一个。
 
     // 交给 SDK 完成动作求值、呼吸/眨眼/物理/姿势，并最终把参数提交到 drawable。
     //
@@ -1408,14 +1518,16 @@
       try { cm.update(); cm.loadParameters(); } catch (e2) {}
     }
 
-    if (dur <= 0) { tickPlayAllLoopDwell(); return; }
-
-    // 循环动作靠停留计时推进（它不会自然播完）
-    tickPlayAllLoopDwell();
-
     // 播完自动切下一个；走到最后一个之后再回到第 1 个，形成无限循环。
-    // 循环动作（Idle 之类）不会自然播完，交给上面的 tickPlayAllLoopDwell 推走。
-    if (!holding && !isCurrentLoop() && !S._advancing) {
+    //
+    // ⚠️⚠️ 这里绝不能再按「是否循环动作」分叉（曾经如此）：
+    //     zhala_2 的 motion3.json 把 **全部 15 个动作** 都标了 Meta.Loop = true，
+    //     于是每个动作都被当成循环动作、靠一个固定的 LOOP_DWELL = 6 秒推走 ——
+    //     wedding(31.17s) / login(22.33s) / home(20.17s) 全都在第 6 秒被硬切，
+    //     看起来就是「动作播到一半突然跳走」。
+    //     正确语义：**不管 Meta.Loop 是什么，都完整播一遍自己的时长再走下一个**。
+    //     本 SDK build 的 _isLoop 恒为 false，动作本来就不会自己绕回，播满即止。
+    if (!holding && !S._advancing) {
       // 队列项为空 = 动作已被 SDK 摘掉（播完）；队列项还在时按时间轴位置判断。
       // t 用 holdTime 兜底：动作播完的那一帧 holdTime 已经停在末尾。
       var t = e ? currentTime() : Math.min(S.holdTime, dur);
@@ -1431,24 +1543,16 @@
 
   // ---------- 自动依次播完全部动作 ----------
   // 页面固定处于「依次播完全部动作」模式：模型载入后从第 1 个动作开始，
-  // 一个接一个播完，最后一个播完再回到第 1 个，无限循环。
-  // 循环动作（Idle 之类）没有「播完」的瞬间，所以给它一个固定停留时间再往下走，
-  // 否则会永远卡在 Idle 上。
-  var LOOP_DWELL = 6;   // 秒：循环动作最多停留多久
+  // 一个接一个完整播完自己的时长，最后一个播完再回到第 1 个，无限循环。
+  //
+  // ⚠️ 这里曾经有一个 LOOP_DWELL = 6 秒的「循环动作停留计时」，已删除。
+  //    它按「Meta.Loop = true 的动作不会自然播完」来给固定停留时间，
+  //    结果把所有标了 Loop 的动作都在第 6 秒硬切。zhala_2 是 15 个动作全标 Loop，
+  //    受影响最明显（wedding 31.17s 只播 6s）。现在统一按真实时长推进，
+  //    时长缺失的动作用一个兜底值，避免卡死。
 
-  // 循环动作靠这个兜底推进：进循环动作后开始计时，超过 LOOP_DWELL 就跳下一个
-  var loopEnterAt = 0, loopEnterIndex = -1;
-  function tickPlayAllLoopDwell() {
-    if (!S.autoPlayAll) return;
-    if (!isCurrentLoop()) { loopEnterIndex = -1; return; }
-    if (loopEnterIndex !== S.current) { loopEnterIndex = S.current; loopEnterAt = Date.now(); return; }
-    if (Date.now() - loopEnterAt < LOOP_DWELL * 1000) return;
-    if (S._advancing) return;
-    S._advancing = true;
-    setTimeout(function () { S._advancing = false; }, 450);
-    var next = S.current + 1;
-    playMotion(next >= S.motions.length ? 0 : next, true);
-  }
+  // 动作时长未知时的兜底（正常都能从 motion3.json 的 Meta.Duration 读到）
+  var FALLBACK_DUR = 8;
 
   // 定格队列项的终点时间。必须远大于任何动作时长，让 isFinished() 恒为 false，
   // 否则 doUpdateMotion 会空转、参数写不进去（表现为人物持续抖动）。
@@ -1628,12 +1732,12 @@
 
     els.showWire.addEventListener('change', function () { toggleWire(els.showWire.checked); });
 
-    els.btnTheme.addEventListener('click', function () {
-      var dark = els.stage.classList.toggle('dark');
-      els.btnTheme.classList.toggle('on', dark);
-      els.btnTheme.textContent = dark ? '浅色舞台' : '深色舞台';
-      saveState();
-    });
+    var themeBtns = els.stageSegBtns;
+    for (var ti = 0; ti < themeBtns.length; ti++) {
+      (function (btn) {
+        btn.addEventListener('click', function () { setStageTheme(btn.getAttribute('data-stage')); });
+      })(themeBtns[ti]);
+    }
 
     window.addEventListener('keydown', function (e) {
       if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
@@ -1642,6 +1746,7 @@
       else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
       else if (e.key === 'r' || e.key === 'R') userPlay(S.current);
       else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
+      else if (e.key === 't' || e.key === 'T') cycleStageTheme();
       // 浏览器原生全屏由 Esc 自己处理；这里兜底「请求被拒、只剩 CSS 全屏」的情况
       else if (e.key === 'Escape' && S.fullscreen) exitFullscreen();
     });
@@ -1657,6 +1762,31 @@
     if (S.app) S.app.renderer.resize(box.w, box.h);
     if (S.wireOn) drawWire(S.wire);
     setZoomPercent(keep);
+  }
+
+  // ---------- 舞台背景：浅色 / 深色 / 黑色 ----------
+  // 只改 .stage 上的类，模型本身与渲染器都不动，所以切换是零成本的。
+  // 两个深色类都会触发同一批浮层配色（见 CSS 里 .stage.dark / .stage.black 那几组规则）。
+  var STAGE_THEMES = ['light', 'dark', 'black'];
+
+  function setStageTheme(name, silent) {
+    if (STAGE_THEMES.indexOf(name) < 0) name = 'light';
+    S.stageTheme = name;
+    els.stage.classList.toggle('dark', name === 'dark');
+    els.stage.classList.toggle('black', name === 'black');
+    var btns = els.stageSegBtns;
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('on', btns[i].getAttribute('data-stage') === name);
+    }
+    // boot() 恢复时传 silent：那时 S.speed / S.collapsed 还没读回来，
+    // 立刻 saveState() 会把它们冲成默认值，把用户存的速度和折叠状态弄丢。
+    if (!silent) saveState();
+  }
+
+  // 快捷键 T：浅色 → 深色 → 黑色 → 浅色
+  function cycleStageTheme() {
+    var i = STAGE_THEMES.indexOf(S.stageTheme);
+    setStageTheme(STAGE_THEMES[(i + 1) % STAGE_THEMES.length]);
   }
 
   // ---------- 全屏：整个屏幕只显示模型 ----------
@@ -1791,10 +1921,9 @@
     setupRepoLink();
 
     var st = loadState();
-    if (st && st.dark) {
-      els.stage.classList.add('dark');
-      els.btnTheme.classList.add('on');
-      els.btnTheme.textContent = '浅色舞台';
+    // 舞台主题：新版存字符串 st.stage；老版本存的是布尔 st.dark，一并兼容
+    if (st && (typeof st.stage === 'string' || st.dark)) {
+      setStageTheme(typeof st.stage === 'string' ? st.stage : (st.dark ? 'dark' : 'light'), true);
     }
     if (st && typeof st.speed === 'number') {
       S.speed = st.speed;
@@ -1845,6 +1974,8 @@
           userPlay: userPlay,
           togglePlay: togglePlay,
           toggleFullscreen: toggleFullscreen,
+          setStageTheme: setStageTheme,
+          cycleStageTheme: cycleStageTheme,
           switchModel: function (key) {
             for (var i = 0; i < S.models.length; i++) {
               if (S.models[i].key === key) return switchModel(S.models[i]);
@@ -1904,6 +2035,7 @@
               playing: S.playing,
               autoPlayAll: S.autoPlayAll,
               fullscreen: S.fullscreen,
+              stageTheme: S.stageTheme,
               startRecoveryCount: startRecoveryCount,
               speed: S.speed,
               clock: S.motionClock,
