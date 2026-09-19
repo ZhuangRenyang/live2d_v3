@@ -95,6 +95,28 @@
   .side-head .n{ font-size:12px; color:var(--text-dim); margin-top:4px; }
 
   .model-list{ overflow-y:auto; padding:8px; flex:0 0 auto; max-height:44%; }
+
+  /* 隐藏动作列表时，模型列表吃掉整个侧栏高度 */
+  .sidebar.no-motions .model-list{ flex:1 1 auto; max-height:none; }
+  .sidebar.no-motions #motionPane{ display:none; }
+
+  /* 「连播全部」进行中的提示条 */
+  .playall-bar{
+    display:none; align-items:center; gap:8px;
+    margin:0 10px 8px; padding:7px 10px; border-radius:9px;
+    background:var(--accent-soft); border:1px solid #c3d5fb;
+    font-size:11.5px; font-weight:600; color:var(--accent);
+  }
+  .playall-bar.on{ display:flex; }
+  .playall-bar .spin{
+    width:10px; height:10px; border:2px solid #c3d5fb; border-top-color:var(--accent);
+    border-radius:50%; animation:spin .7s linear infinite; flex:0 0 10px;
+  }
+  .playall-bar .txt{ flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .playall-bar button{
+    border:0; background:transparent; color:var(--accent); cursor:pointer;
+    font:inherit; font-weight:700; padding:0 2px;
+  }
   .model-item{
     display:flex; align-items:center; gap:10px;
     padding:9px 10px; border-radius:10px; cursor:pointer;
@@ -328,17 +350,25 @@
       </div>
       <div class="model-list" id="modelList"></div>
 
-      <div class="panel-title">
-        <span>动作列表</span>
-        <span id="motionCount" style="text-transform:none;letter-spacing:0;font-weight:600;"></span>
+      <div class="playall-bar" id="playAllBar">
+        <span class="spin"></span>
+        <span class="txt" id="playAllTxt">连播全部动作…</span>
+        <button id="playAllStop" title="停止连播">停止</button>
       </div>
-      <div class="search">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7">
-          <circle cx="6.8" cy="6.8" r="4.6"/><path d="M10.3 10.3 14 14"/>
-        </svg>
-        <input type="text" id="motionSearch" placeholder="筛选动作…" autocomplete="off" />
+
+      <div id="motionPane">
+        <div class="panel-title">
+          <span>动作列表</span>
+          <span id="motionCount" style="text-transform:none;letter-spacing:0;font-weight:600;"></span>
+        </div>
+        <div class="search">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7">
+            <circle cx="6.8" cy="6.8" r="4.6"/><path d="M10.3 10.3 14 14"/>
+          </svg>
+          <input type="text" id="motionSearch" placeholder="筛选动作…" autocomplete="off" />
+        </div>
+        <div class="motion-list" id="motionList"></div>
       </div>
-      <div class="motion-list" id="motionList"></div>
     </aside>
 
     <div class="stage-wrap">
@@ -397,7 +427,11 @@
 
         <div class="divider"></div>
 
-        <label class="sw"><input type="checkbox" id="autoNext" /><span class="track"></span><span>播完自动下一个</span></label>
+        <label class="sw" title="勾选后，切到任意模型都会从第 1 个动作开始依次播完该模型的全部动作">
+          <input type="checkbox" id="playAll" /><span class="track"></span><span>切模型后连播全部</span>
+        </label>
+        <label class="sw" title="非循环动作播完后自动跳下一个"><input type="checkbox" id="autoNext" /><span class="track"></span><span>播完自动下一个</span></label>
+        <label class="sw" title="隐藏左侧的动作列表，把空间让给模型列表"><input type="checkbox" id="hideMotions" /><span class="track"></span><span>隐藏动作列表</span></label>
         <label class="sw"><input type="checkbox" id="showWire" /><span class="track"></span><span>显示网格</span></label>
         <button class="tbtn" id="btnReset">复位视图</button>
       </div>
@@ -445,6 +479,12 @@
     zoom:         document.getElementById('zoom'),
     zoomVal:      document.getElementById('zoomVal'),
     autoNext:     document.getElementById('autoNext'),
+    playAll:      document.getElementById('playAll'),
+    hideMotions:  document.getElementById('hideMotions'),
+    motionPane:   document.getElementById('motionPane'),
+    playAllBar:   document.getElementById('playAllBar'),
+    playAllTxt:   document.getElementById('playAllTxt'),
+    playAllStop:  document.getElementById('playAllStop'),
     showWire:     document.getElementById('showWire'),
     btnReset:     document.getElementById('btnReset'),
     btnTheme:     document.getElementById('btnTheme'),
@@ -477,7 +517,11 @@
     wire: null,          // 网格容器
     wireOn: false,
     busyModel: false,
-    autoNext: false
+    pendingModel: null,  // 载入中又点了别的模型时暂存下来，载完再切过去
+    autoNext: false,     // 单模型内：播完自动跳下一个
+    autoPlayAll: false,  // 切模型后自动从第 1 个动作依次连播全部
+    hideMotions: false,  // 隐藏左侧动作列表，只留模型列表
+    primed: false        // 动作队列是否已由 playMotion 初始化好（见 tickProgress 开头）
   };
 
   // ---------- 工具 ----------
@@ -518,6 +562,17 @@
     els.ovDetail.textContent = detail || '';
   }
   function hideOverlay() { els.overlay.classList.add('hide'); }
+  // 连播结束时用：只收掉遮罩，不改变任何播放状态
+  function hideOverlaySoft() { els.overlay.classList.add('hide'); }
+
+  // 隐藏动作列表：侧栏只留模型列表，模型列表吃掉整高。
+  // 隐藏时动作仍在按时间轴播放，只是不给按钮了。
+  function applyHideMotions(on) {
+    S.hideMotions = !!on;
+    var sb = document.querySelector('.sidebar');
+    if (sb) sb.classList.toggle('no-motions', S.hideMotions);
+    if (els.hideMotions) els.hideMotions.checked = S.hideMotions;
+  }
 
   function saveState() {
     try {
@@ -527,12 +582,29 @@
         dark: els.stage.classList.contains('dark'),
         speed: S.speed,
         autoNext: S.autoNext,
+        autoPlayAll: S.autoPlayAll,
+        hideMotions: S.hideMotions,
         collapsed: S.collapsed
       }));
     } catch (e) { /* 忽略隐私模式下的写入失败 */ }
   }
   function loadState() {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch (e) { return null; }
+  }
+
+  // ?model=<path/file> 直接指定要打开的模型，方便把某个模型的预览链接分享出去。
+  // 也接受 ?model=<模型目录名>，会取该目录下的第一个模型。
+  function wantModelFromURL() {
+    var want = '';
+    try { want = new URLSearchParams(location.search).get('model') || ''; } catch (e) { want = ''; }
+    if (!want) return '';
+    want = want.replace(/^\/+|\/+$/g, '');
+    for (var i = 0; i < S.models.length; i++) if (S.models[i].key === want) return want;
+    // 退一步：按目录名 / 模型名匹配
+    for (var j = 0; j < S.models.length; j++) {
+      if (S.models[j].path === want || S.models[j].name === want) return S.models[j].key;
+    }
+    return '';
   }
 
   // ---------- 1. 发现模型 ----------
@@ -784,7 +856,7 @@
         '<span class="label">' + escapeHtml(label) + '</span>' +
         (mo.loop ? '<span class="tag">循环</span>' : '') +
         '<span class="dur">' + (mo.duration ? mo.duration.toFixed(1) + 's' : '') + '</span>';
-      btn.addEventListener('click', function () { playMotion(i); });
+      btn.addEventListener('click', function () { userPlay(i); });
       els.motionList.appendChild(btn);
     });
     els.motionCount.textContent = kw ? shown + '/' + S.motions.length : S.motions.length + ' 个';
@@ -824,8 +896,21 @@
   }
 
   function switchModel(m) {
-    if (S.busyModel) return;
+    // 载入中又点了别的模型：别直接丢掉这次点击（用户会觉得「点了没反应」），
+    // 记成 pending，等当前这次载完再切过去。同一时刻只保留最后一次点击。
+    if (S.busyModel) {
+      // 已经就是正在载入的那个 → 不必再排队
+      if (!S.model || (S.model.key !== m.key)) S.pendingModel = m;
+      return;
+    }
+    S.pendingModel = null;
     S.busyModel = true;
+
+    // 换模型必须把播放状态整体复位。
+    // 上一轮加的「播完自动停」会把 S.playing 置成 false；若不在这里复位，
+    // 新模型载入后虽然调了 playMotion()，但因为 S.playing 是 false、时间轴不走，
+    // 画面上看就是「切了模型之后不会自动播放」。
+    resetPlayState();
     showOverlay('正在载入模型 ' + modelTitle(m) + ' …', '读取模型配置与动作数据', false, true);
 
     // 模型的完整目录：models/<path>
@@ -847,8 +932,12 @@
       showOverlay('正在载入模型 ' + modelTitle(m) + ' …', '解析纹理与网格', false, true);
       return loadIntoStage(manifestUrl);
     }).then(function () {
-      // 先保证有动作在播，再撤掉遮罩，避免露出空白帧
-      if (S.motions.length) playMotion(0, true);
+      // 先保证有动作在播，再撤掉遮罩，避免露出空白帧。
+      // 连播模式下从第 1 个开始依次播完（不再单独 playMotion(0)，否则会重置一次）。
+      if (S.motions.length) {
+        if (S.autoPlayAll) { startPlayAll(); }
+        else { playMotion(0, true); }
+      }
       S.app.render();
       // 至少展示 350ms，避免加载过快时遮罩闪烁
       var wait = Math.max(0, 350 - (Date.now() - t0));
@@ -859,10 +948,45 @@
       saveState();
       // 若当前模型在折叠的分组里，自动展开该分组
       revealActiveModel();
+      drainPendingModel();
     }).catch(function (e) {
       S.busyModel = false;
+      // 载入失败时把舞台清干净，否则会留着上一个模型或半成品状态，
+      // 用户再点别的模型时会因为 busyModel / 残留队列而表现异常。
+      try {
+        if (S.l2dModel) { S.app.stage.removeChild(S.l2dModel); S.l2dModel.destroy(); }
+      } catch (e2) {}
+      S.l2dModel = null;
+      S.motions = [];
+      S.current = -1;
+      els.motionList.innerHTML = '';
+      els.badge.style.display = 'none';
+      els.progress.disabled = true;
       showOverlay('模型载入失败：' + modelTitle(m), String((e && e.message) || e), true, false);
+      drainPendingModel();
     });
+  }
+
+  // 载入过程中用户又点了别的模型 → 现在补切过去
+  function drainPendingModel() {
+    var next = S.pendingModel;
+    if (!next) return;
+    S.pendingModel = null;
+    switchModel(next);
+  }
+
+  // 复位所有播放状态。换模型时必须调用，否则上一模型的定格/暂停/播完标记
+  // 会带到新模型上，表现为「切过来不会自动播放」。
+  function resetPlayState() {
+    S.playing = true;
+    S.manual = false;
+    S.seekRequest = null;
+    S.finished = false;
+    S.motionClock = 0;
+    S.holdTime = 0;
+    S._advancing = false;
+    clearHoldEntry();
+    setPlayIcon();
   }
 
   function revealActiveModel() {
@@ -887,6 +1011,7 @@
         motionPreload: 'ALL'
       }).then(function (model) {
         S.l2dModel = model;
+        S.primed = false;    // 新模型的新队列还没初始化，先让 tickProgress 站住
         S.app.stage.addChild(model);
         model.interactive = false;
         model.anchor.set(0.5, 0.5);
@@ -1031,6 +1156,51 @@
     return (mo && mo.group) || '';
   }
 
+  // 在 motionManager 里找到 S.motions[i] 对应的那个「已加载的动作对象」。
+  //
+  // 两条路：
+  //   1. 按下标直接取：mm.motionGroups[group][localIndex]
+  //      SDK 的 setupMotions 是 `for(let t=0;t<this.definitions[group].length;t++) this.loadMotion(group,t)`，
+  //      所以 motionGroups[group] 的下标与 definitions[group] 一一对应；
+  //      而 definitions 就是 model3.json 的 FileReferences.Motions，键序与文件里一致。
+  //      parseMotions 也按同样的键序编号 localIndex，因此下标是对得上的。
+  //   2. 按下标取不到（或取到的对象文件名不符）时，用 definitions 里的 File 反查。
+  //      ⚠️ 不能用 mm.getMotionFile(motionGroups[g][i])：那个函数读的是 *定义* 的 .File，
+  //      而 motionGroups 里放的是已加载的 *动作对象*（没有 .File 字段），返回 undefined。
+  //      要拿文件名得走 mm.definitions[group][i].File。
+  function findMotionObject(mm, mo) {
+    if (!mm || !mo) return null;
+    var group = mo.group || '';
+    var groups = mm.motionGroups || {};
+    var defs = (mm.definitions && mm.definitions[group]) || null;
+    var list = groups[group] || null;
+
+    // 1. 下标直取，并核对文件名（防止个别模型 definitions 顺序被 SDK 重排）
+    if (list && typeof mo.localIndex === 'number' && mo.localIndex >= 0) {
+      var cand = list[mo.localIndex];
+      if (cand) {
+        var defFile = defs && defs[mo.localIndex] ? defs[mo.localIndex].File : null;
+        if (!defFile || sameMotionFile(defFile, mo.file)) return cand;
+      }
+    }
+
+    // 2. 按 File 名在 definitions 里反查，再取同下标的动作对象
+    if (defs && list) {
+      for (var i = 0; i < defs.length; i++) {
+        if (sameMotionFile(defs[i] && defs[i].File, mo.file) && list[i]) return list[i];
+      }
+    }
+    return null;
+  }
+
+  // 比较动作文件名。model3.json 里可能是 'motions/x.motion3.json'，
+  // apply 过 URL 处理后可能变成绝对路径，统一按文件名比对。
+  function sameMotionFile(a, b) {
+    if (!a || !b) return false;
+    if (a === b) return true;
+    return String(a).split('/').pop() === String(b).split('/').pop();
+  }
+
   // 取出当前正在播放的队列项
   function activeEntry() {
     var mm = motionManager();
@@ -1062,12 +1232,36 @@
     return (S.motions[S.current] || {}).duration || 0;
   }
 
+  // 当前动作是否为循环动作。
+  //
+  // ⚠️ 不要用 e._motion.isLoop() 当唯一判据：实测 Cubism4MotionManager 载入后
+  //    动作对象的 _isLoop 恒为 false（即使 motion3.json 里写了 Meta.Loop = true），
+  //    因为 _isLoop 是「解析时」才写进去的，而 SDK 在 preload/loadMotion 的快路径下
+  //    并不会把 Meta.Loop 带过来。曾经这里优先读 SDK 的 isLoop()，
+  //    于是所有循环动作都被当成「非循环」：
+  //      · 连播时循环动作不会被 LOOP_DWELL 计时推走 → 永远卡在 Idle 上；
+  //      · 循环动作绕回起点那一瞬 isFinished() 为真时会被误判成「播完了」而停表。
+  //    真相来源是我们自己 scan 出来的 S.motions[i].loop（直接读 motion3.json 的 Meta.Loop）。
+  //    所以优先用 SDK 的值，只有在它明确为 true 时才采信；否则回落到本地标记。
   function isCurrentLoop() {
+    var mo = S.motions[S.current];
+    if (mo && mo.loop) return true;          // 本地标记是权威（来自 Meta.Loop）
     var e = activeEntry();
     if (e && e._motion && typeof e._motion.isLoop === 'function') {
       try { return !!e._motion.isLoop(); } catch (err) {}
     }
-    return !!(S.motions[S.current] || {}).loop;
+    return false;
+  }
+
+  // 用户主动选/切动作：要退出「连播全部」，否则刚点完就被连播逻辑顶掉。
+  function userPlay(index) {
+    if (S.autoPlayAll) {
+      S.autoPlayAll = false;
+      els.playAll.checked = false;
+      els.playAllBar.classList.remove('on');
+      saveState();
+    }
+    playMotion(index);
   }
 
   function playMotion(index, silent) {
@@ -1079,39 +1273,35 @@
     S.holdTime = 0;
     S.finished = false;
     clearHoldEntry();
+    loopEnterIndex = -1;   // 连播的「循环动作停留计时」随动作切换重置
     var mo = S.motions[index];
 
     var mm = motionManager();
     if (mm) {
       try { mm.stopAllMotions(); } catch (e) {}
       var group = mo.group || '';
-      var groupList = (mm.motionGroups && mm.motionGroups[group]) || [];
-
-      // localIndex 在 parseMotions 里已按定义顺序算好，直接取用
-      var motionObj = (typeof mo.localIndex === 'number' && mo.localIndex >= 0)
-        ? groupList[mo.localIndex] : null;
-
-      if (!motionObj) {
-        // 退而求其次：按 File 路径在 groupList 里反查
-        for (var g = 0; g < groupList.length; g++) {
-          if (mm.getMotionFile && mm.getMotionFile(groupList[g]) === mo.file) { motionObj = groupList[g]; break; }
-        }
-      }
-
+      var motionObj = findMotionObject(mm, mo);
+      // 兜底：同组随机播一个（只有实在找不到目标动作时才会走到）
+      if (!motionObj) { try { mm.startRandomMotion(group, 3); } catch (e2) {} }
       if (motionObj) {
-        // 唯一可靠的“指定动作”入口：直接把动作对象塞进队列
-        // doUpdateMotion(coreModel, 当前时间) 会用「当前时间 - startTime」求进度
         mm.queueManager.startMotion(motionObj, false);
         var qe = activeEntry();
         if (qe) {
-          // 把动作起点定在 0，我们自己的时钟也归零
+          // 关键：必须在这里把队列项的起点/终点/淡入起点全部定死，并标记为「已开始」。
+          // 否则 SDK 会在下一次 updateParameters 时用「当时的 t」重新初始化
+          // startTime / fadeInStartTime —— 而那个 t 可能还是上一个模型的时钟，
+          // 结果 fadeIn 权重恒为 0、动作参数写不进去（画面错位）。
+          //
+          // 一旦把 setIsStarted 置 true，SDK 就不会再补 endTime，所以这里必须自己给：
+          //   endTime < 0 会让 isFinished() 永远为假 → 播完自动下一个 / 连播永远不会触发。
+          var durS = motionObjectDuration(motionObj, mo);
+          qe.setIsStarted(true);
           qe.setStartTime(0);
-          mm.queueManager._doUpdateTime = 0;
+          qe.setEndTime(durS > 0 ? durS : HOLD_END);
+          qe.setFadeInStartTime(-motionFadeIn(motionObj) - 0.001);
         }
+        mm.queueManager._doUpdateTime = 0;
         mm.playing = true;
-      } else {
-        // 兜底：随机播放同组动作
-        try { mm.startRandomMotion(group, 3); } catch (e2) {}
       }
     } else if (S.l2dModel) {
       try { S.l2dModel.motion(mo.group || '', 0).catch(function () {}); } catch (e) {}
@@ -1120,6 +1310,7 @@
     S.playing = true;
     S.manual = false;
     S.seekRequest = null;
+    S.primed = true;     // 队列已初始化好，tickProgress 可以开始推进了
     setPlayIcon();
     renderMotions();
     els.badgeMotion.textContent = prettyName(mo.base) + (mo.duration ? ' · ' + mo.duration.toFixed(1) + 's' : '');
@@ -1183,9 +1374,20 @@
   // 所以我们接管动作时间轴：自己累加 S.motionClock，再用 doUpdateMotion 算出这一帧的参数。
   // 但 internalModel.update() 同时还负责呼吸、眨眼、物理、以及最关键的
   // coreModel.update()/loadParameters()（把参数真正写进 drawable），
-  // 所以仍需调用它，只是传一个极小的 dt，避免它把动作时间搞乱。
+  // 所以仍需调用它，只是传真实的帧间隔 + 动作时间轴位置。
   function tickProgress(delta) {
     if (!S.l2dModel || !S.motions.length) return;
+    // 换模型时，新模型挂上舞台到 playMotion() 跑起来之间会隔几帧。
+    // 这几帧里如果照常走下面的逻辑，就会用一个「上一个模型留下的」S.motionClock
+    // 去初始化新动作队列项 —— SDK 会在首次求值时把
+    //   startTime = fadeInStartTime = 当时的 t
+    // 于是 fadeIn 权重恒为 ease(0)=0，动作参数一个都写不进去，画面只剩呼吸/物理。
+    // 下面这个「出错就静默重试」的循环必须等 playMotion 把时钟和队列都重置好。
+    if (!S.primed) {
+      // 还没准备好：只把 SDK 的呼吸/物理跑起来，别碰动作时间轴
+      try { S.l2dModel.internalModel.update((1 / 60) * 1000, 0); } catch (e0) {}
+      return;
+    }
     var im = S.l2dModel.internalModel;
     var mm = motionManager();
     var cm = coreModel();
@@ -1231,6 +1433,8 @@
           var qs = mm.queueManager;
           S.pausedEntry.setStartTime(0);
           S.pausedEntry.setEndTime(HOLD_END);
+          // 必须把淡入起点往回拨，否则 fadeIn 权重为 0、参数写不进去
+          S.pausedEntry.setFadeInStartTime(S.holdTime - motionFadeIn(S.pausedEntry._motion) - 0.001);
           qs._doUpdateTime = S.holdTime;
           qs.doUpdateMotion(cm, S.holdTime);
         } catch (err) {}
@@ -1251,6 +1455,21 @@
       var qt = mm.queueManager;
       qt._doUpdateTime = S.motionClock;
       try { qt.doUpdateMotion(cm, S.motionClock); } catch (err) {}
+    } else if (!S.manual && S.holdTime > 0 && isCurrentLoop() && !S.autoPlayAll && !S.autoNext && S.playing) {
+      // 循环动作播到头 —— 自己重播一次（SDK 不会帮我们绕回起点）。
+      //
+      // ⚠️ 这个 SDK build 里 Cubism4Motion 的 _isLoop 永远是 false：
+      //    全文件里 setIsLoop 只有方法定义、没有任何调用点，所以
+      //    「a >= duration 时 setStartTime(i) 绕回起点」那段死代码永远走不到，
+      //    循环动作到头后 SDK 会直接把队列项标记 finished 并摘掉。
+      //    表现就是 Idle 播一遍就停住。要真的循环，只能在这里手动重播。
+      //
+      // 连播（autoPlayAll）/ 自动下一个（autoNext）模式下不在这里重播：
+      //   它们由 tickPlayAllLoopDwell 或自动推进逻辑接管（循环动作靠 LOOP_DWELL 计时走）。
+      S.finished = false;
+      S.motionClock = 0;
+      S.holdTime = 0;
+      playMotion(S.current, true);
     } else if (!S.manual && S.holdTime > 0 && !isCurrentLoop()) {
       // 非循环动作播完后 SDK 会把队列项移除，此时把最后一帧续上，
       // 避免参数回到初始姿势、进度条突然归零。
@@ -1260,10 +1479,6 @@
       // 走到这个分支说明「原本在播、现在队列空了」= 动作自然播完。
       // 记下 finished，并把播放状态收掉：画面已定格，再显示「暂停中」会让用户困惑，
       // 而且此时按播放应当重播，若 S.playing 仍为 true 就会被误判成「暂停」。
-      //
-      // ⚠️ 必须排除循环动作：循环动作在绕回起点的一瞬间 isFinished() 会短暂为真，
-      // SDK 随之把队列项摘掉再重新入队。若不排除，每绕一圈都会被当成「播完了」，
-      // 于是把 S.playing 置为 false，表现是循环动作播一会儿就自己停住、图标乱跳。
       S.finished = true;
       S.playing = false;
       setPlayIcon();
@@ -1271,22 +1486,41 @@
       mountHoldEntry(mm, cm, S.holdTime);
     }
 
-    // 交给 SDK 完成呼吸/眨眼/物理/姿势，并最终把参数提交到 drawable。
+    // 交给 SDK 完成动作求值、呼吸/眨眼/物理/姿势，并最终把参数提交到 drawable。
     //
-    // 第一个参数（deltaMS）必须传真实帧间隔：
-    //   physics.evaluate(coreModel, dt)   —— 物理是按 dt 迭代收敛的弹簧系统，
-    //   pose.updateParameters(coreModel, dt) —— 部件淡入淡出同样按 dt 累积。
-    // 传 0 会让它们每帧都停在同一中间态、永不收敛，画面出现持续高频微抖。
-    // 第二个参数（elapsedMS）必须传 0：动作进度已由上面的 doUpdateMotion 决定，
-    // 而 internalModel.update 内部的 motionManager.update() 用的是 elapsed 时间，
-    // 传真实时间会让 motion 与表情层的时间基互相打架。
+    // 两个参数的含义（从 minified 源码逆出）：
+    //   update(deltaMS, elapsedMS) {
+    //     t = deltaMS/1000; e = elapsedMS/1000;
+    //     n = motionManager.update(cm, e)        // ← 动作按 elapsed 求值！
+    //     cm.saveParameters()
+    //     expressionManager?.update(cm, e)       // ← 表情也按 elapsed
+    //     n || eyeBlink?.updateParameters(cm, t) // ← 眨眼按 delta
+    //     updateFocus()
+    //     updateNaturalMovements(1e3*t, 1e3*e)   // → breath 用 t
+    //     physics?.evaluate(cm, t)               // ← 物理按 delta 迭代收敛
+    //     pose?.updateParameters(cm, t)          // ← pose 按 delta 累积
+    //     cm.update(); cm.loadParameters()
+    //   }
+    //
+    // deltaMS（第一个）必须传真实帧间隔：physics / pose / breath 都是按 dt 收敛的，
+    //   传 0 会让它们卡在中间态永不收敛。
+    //
+    // elapsedMS（第二个）必须传「动作时间轴位置」，即和上面 doUpdateMotion 用同一个值。
+    //   ⚠️ 这里曾经传 0，是「播放错位」的根因：
+    //     motionManager.update(cm, e) → queueManager.doUpdateMotion(cm, e)
+    //     会用 e 求动作进度与淡入权重，而我们对同一帧刚用 S.motionClock 写好了参数，
+    //     紧接着这一句又用 0 把它们覆盖回「时间 0」的混合结果。
+    //     时间 0 处的 fadeIn 权重是 0 → 动作参数 = 当前值 + (目标值-当前值)*0 = 当前值，
+    //     等于动作一个参数都没写进去；画面剩下的只有呼吸/物理/姿势层，
+    //     于是人物停在「上一帧的姿势 + 呼吸抖动」上，时间轴却在正常走 —— 即错位。
+    //   传 S.motionClock 后，两处求值用同一时刻，权重能正常淡入到 1。
     try {
-      im.update(dt * 1000, 0);
+      im.update(dt * 1000, S.motionClock * 1000);
     } catch (err) {
       try { cm.update(); cm.loadParameters(); } catch (e2) {}
     }
 
-    if (dur <= 0) return;
+    if (dur <= 0) { tickPlayAllLoopDwell(); return; }
 
     // 定格/暂停时进度条直接读时间轴位置；正常播放时按队列项算，
     // 动作被移除（播完）时停在末端而不是归零
@@ -1296,15 +1530,76 @@
     els.progress.value = String(Math.round(ratio * 1000));
     els.progressVal.textContent = fmtSec(t) + ' / ' + dur.toFixed(2) + 's';
 
-    // 播完自动切下一个（循环动作与手动模式除外）
-    if (S.autoNext && !S.manual && !holding && !isCurrentLoop()) {
-      var finished = (!e) || (t >= dur - 0.02);
-      if (finished && !S._advancing) {
-        S._advancing = true;
-        setTimeout(function () { S._advancing = false; }, 450);
-        playMotion(S.current + 1, true);
+    // 连播模式下，循环动作靠停留计时推进（它不会自然播完）
+    tickPlayAllLoopDwell();
+    updatePlayAllTxt();
+
+    // 播完自动切下一个。两种模式共用这一处判断：
+    //   S.autoPlayAll —— 切换模型后从第 1 个依次播完全部动作，播到最后停止
+    //   S.autoNext    —— 只在本模型内循环往下切，到最后回到第 1 个
+    // 循环动作（Idle 之类）不会自然播完，所以两种模式都要跳过它。
+    var autoAdvance = (S.autoPlayAll || S.autoNext) && !S.manual && !holding;
+    if (autoAdvance && !isCurrentLoop()) {
+      var done = (!e) || (t >= dur - 0.02);
+      if (done && !S._advancing) {
+        var next = S.current + 1;
+        var last = next >= S.motions.length;
+        if (last && S.autoPlayAll) {
+          // 全部动作播完 —— 收尾：停在第 1 个动作的末帧上，不自动重播，
+          // 免得用户以为它「停不下来」。
+          stopPlayAll();
+        } else {
+          S._advancing = true;
+          setTimeout(function () { S._advancing = false; }, 450);
+          playMotion(last ? 0 : next, true);
+        }
       }
     }
+  }
+
+  // ---------- 连播全部 ----------
+  // 「切模型后连播全部」：切完模型从第 1 个动作开始，依次播到底。
+  // 循环动作没有「播完」的瞬间，所以遇到循环动作给它一个固定停留时间再往下走，
+  // 否则连播会永远卡在 Idle 上。
+  var LOOP_DWELL = 6;   // 秒：连播时循环动作最多停留多久
+
+  function startPlayAll() {
+    if (!S.motions.length) return;
+    S.autoPlayAll = true;
+    S.autoNext = false;
+    els.autoNext.checked = false;
+    els.playAllBar.classList.add('on');
+    updatePlayAllTxt();
+    playMotion(0, true);
+  }
+
+  function stopPlayAll() {
+    S.autoPlayAll = false;
+    els.playAllBar.classList.remove('on');
+    // 连播结束时不额外停表，让画面就停在最后一个动作的末帧
+    hideOverlaySoft();
+  }
+
+  function updatePlayAllTxt() {
+    if (!S.autoPlayAll) return;
+    var n = S.motions.length;
+    var i = Math.max(0, S.current) + 1;
+    els.playAllTxt.textContent = '连播全部动作 ' + i + '/' + n + ' · ' + (S.motions[S.current] ? prettyName(S.motions[S.current].base) : '');
+  }
+
+  // 连播时循环动作靠这个兜底推进：进循环动作后开始计时，超过 LOOP_DWELL 就跳下一个
+  var loopEnterAt = 0, loopEnterIndex = -1;
+  function tickPlayAllLoopDwell() {
+    if (!S.autoPlayAll || S.manual) return;
+    if (!isCurrentLoop()) { loopEnterIndex = -1; return; }
+    if (loopEnterIndex !== S.current) { loopEnterIndex = S.current; loopEnterAt = Date.now(); return; }
+    if (Date.now() - loopEnterAt < LOOP_DWELL * 1000) return;
+    if (S._advancing) return;
+    var next = S.current + 1;
+    if (next >= S.motions.length) { stopPlayAll(); return; }
+    S._advancing = true;
+    setTimeout(function () { S._advancing = false; }, 450);
+    playMotion(next, true);
   }
 
   // 定格队列项的终点时间。必须远大于任何动作时长，让 isFinished() 恒为 false，
@@ -1321,9 +1616,7 @@
     if (!mm || !mm.queueManager || !cm) return;
     var mo = S.motions[S.current];
     if (!mo) return;
-    var groupList = (mm.motionGroups && mm.motionGroups[mo.group || '']) || [];
-    var motionObj = (typeof mo.localIndex === 'number' && mo.localIndex >= 0)
-      ? groupList[mo.localIndex] : null;
+    var motionObj = findMotionObject(mm, mo);
     if (!motionObj) { playMotion(S.current, true); return; }
     try {
       var qt = mm.queueManager;
@@ -1331,8 +1624,12 @@
       var qe = activeEntry();
       if (!qe) { playMotion(S.current, true); return; }
       var dur = mo.duration || 0;
+      qe.setIsStarted(true);          // 同 playMotion：别让 SDK 用当时的 t 重设起点
       qe.setStartTime(0);
-      qe.setEndTime(dur > 0 ? dur : -1);
+      qe.setEndTime(dur > 0 ? dur : HOLD_END);
+      // 续播时把淡入起点挪到过去，否则以 at 为 fadeInStart 求weight=0，
+      // 参数写不进去（和 mountHoldEntry 同一个坑）。
+      qe.setFadeInStartTime(at - motionFadeIn(motionObj) - 0.001);
       S.motionClock = at;
       S.holdTime = at;
       qt._doUpdateTime = at;
@@ -1342,37 +1639,65 @@
     }
   }
 
+  // 取动作时长（秒）。优先用 SDK 已解析对象的 getDuration()，
+  // 拿不到再退回 probeDurations 从 motion3.json 里读到的值。
+  function motionObjectDuration(motionObj, mo) {
+    try {
+      var d = motionObj && motionObj.getDuration ? motionObj.getDuration() : 0;
+      if (typeof d === 'number' && isFinite(d) && d > 0) return d;
+    } catch (e) {}
+    var d2 = mo && mo.duration;
+    return (typeof d2 === 'number' && isFinite(d2) && d2 > 0) ? d2 : 0;
+  }
 
-  //
+  // 取动作的淡入时长（秒）。SDK 的权重公式用
+  //   ease((t - fadeInStartTime) / fadeInSeconds)
+  // 所以要让某时刻的权重为 1，必须保证 t - fadeInStartTime >= fadeInSeconds。
+  function motionFadeIn(motionObj) {
+    try {
+      var v = motionObj && motionObj._fadeInSeconds;
+      if (typeof v === 'number' && isFinite(v)) return v;
+    } catch (e) {}
+    return 0.5;
+  }
+
+
   // 做法：入队后把起点定在 0、终点设成 HOLD_END（一个远超任何动作时长的值），
-  // 然后每帧都以同一个 t = holdTime 去求值。
+  // 再把「淡入起点」挪到 holdTime 之前一段，最后以 t = holdTime 求值一次。
+  // 之后每帧都以同一个 t 重放，参数恒定不变 —— 画面就稳稳定格住。
   //
-  // 为什么终点不能设成 holdTime 本身：
-  //   doUpdateMotion 开头是 `if (!e.isAvailable() || e.isFinished()) return;`，
-  //   而 isFinished() 判定 t >= endTime。若 endTime == holdTime，一入队就算 finished，
-  //   doUpdateMotion 整个空转 —— 动作参数不会被写入，姿势退回默认值，
-  //   呼吸/物理继续在默认值上叠加，画面上就是人物持续快速抖动。
-  // 为什么终点不能设成 -1（表示「无终点」）：
-  //   非循环动作走到终点会被 SDK 自动出队，我们又要重新挂，反而每帧都在重入队。
+  // ⚠️ 这里有两个必须同时满足的条件，缺一个权重就是 0、动作参数根本写不进去
+  //    （表现：画面里只有呼吸/物理在动，人物姿势是错的 —— 即「错位」）：
+  //
+  //   1. endTime 必须远离 holdTime。
+  //      权重里有一项 fadeOut = ease((endTime - t) / fadeOutSeconds)，
+  //      若 endTime 恰好等于 holdTime，这一项 = ease(0) = 0 → 权重 0。
+  //      （SDK 另外还有 isFinished() ⇒ t >= endTime 的判定，同样会让求值被跳过。）
+  //
+  //   2. fadeInStartTime 必须比 holdTime 早至少 fadeInSeconds。
+  //      权重里另一项 fadeIn = ease((t - fadeInStartTime) / fadeInSeconds)，
+  //      而 SDK 在「首次 updateParameters」时会把 fadeInStartTime 设成当时的 t。
+  //      于是 t == fadeInStartTime ⇒ ease(0) = 0 ⇒ 权重 0。
+  //      必须显式把 fadeInStartTime 往回拨。
   //
   // 关键：只挂一次。每帧重新 startMotion 会让动作在起始姿势与末帧之间来回跳。
   function mountHoldEntry(mm, cm, holdTime) {
     if (S.pausedEntry) return;   // 已经挂好了，不要重复入队
     var mo = S.motions[S.current];
     if (!mo) return;
-    var groupList = (mm.motionGroups && mm.motionGroups[mo.group || '']) || [];
-    var motionObj = (typeof mo.localIndex === 'number' && mo.localIndex >= 0)
-      ? groupList[mo.localIndex] : null;
+    var motionObj = findMotionObject(mm, mo);
     if (!motionObj) return;
     try {
       var qt = mm.queueManager;
       qt.startMotion(motionObj, false);
       var qe = activeEntry();
       if (!qe) return;
-      // 起点给 0：SDK 首次 updateParameters 时会自己把 startTime 重设成当前 t，
-      // 之后 doUpdateMotion 用的是「t - startTime」，只要 t 不变，参数就不变。
+      qe.setIsStarted(true);          // 阻止 SDK 首次求值时把 fadeInStartTime 设成 holdTime
       qe.setStartTime(0);
       qe.setEndTime(HOLD_END);
+      var fi = motionFadeIn(motionObj);
+      // 往回拨一点点余量，避免浮点误差让 ease() 落在 1 的边界外
+      qe.setFadeInStartTime(holdTime - fi - 0.001);
       S.pausedEntry = qe;
       qt._doUpdateTime = holdTime;
       qt.doUpdateMotion(cm, holdTime);
@@ -1435,10 +1760,10 @@
   }
 
   function bindUI() {
-    els.btnPrev.addEventListener('click', function () { playMotion(S.current - 1); });
-    els.btnNext.addEventListener('click', function () { playMotion(S.current + 1); });
+    els.btnPrev.addEventListener('click', function () { userPlay(S.current - 1); });
+    els.btnNext.addEventListener('click', function () { userPlay(S.current + 1); });
     els.btnPlay.addEventListener('click', togglePlay);
-    els.btnReplay.addEventListener('click', function () { playMotion(S.current); });
+    els.btnReplay.addEventListener('click', function () { userPlay(S.current); });
     els.btnReset.addEventListener('click', resetView);
 
     els.motionSearch.addEventListener('input', renderMotions);
@@ -1478,6 +1803,30 @@
 
     els.autoNext.addEventListener('change', function () {
       S.autoNext = els.autoNext.checked;
+      if (S.autoNext && S.autoPlayAll) { S.autoPlayAll = false; els.playAll.checked = false; els.playAllBar.classList.remove('on'); }
+      saveState();
+    });
+
+    els.playAll.addEventListener('change', function () {
+      if (els.playAll.checked) {
+        // 立即对当前模型生效，不用等下一次切换
+        S.autoNext = false;
+        els.autoNext.checked = false;
+        startPlayAll();
+      } else {
+        stopPlayAll();
+      }
+      saveState();
+    });
+
+    els.playAllStop.addEventListener('click', function () {
+      els.playAll.checked = false;
+      stopPlayAll();
+      saveState();
+    });
+
+    els.hideMotions.addEventListener('change', function () {
+      applyHideMotions(els.hideMotions.checked);
       saveState();
     });
 
@@ -1496,6 +1845,8 @@
       [].forEach.call(els.modeSeg.children, function (c) { c.classList.remove('on'); });
       b.classList.add('on');
       var mode = b.dataset.mode;
+      // 手动 / 自动轮播都会接管播放推进，先退出连播模式避免两套逻辑打架
+      if (S.autoPlayAll) { S.autoPlayAll = false; els.playAll.checked = false; els.playAllBar.classList.remove('on'); }
       if (mode === 'auto') { S.autoNext = true; els.autoNext.checked = true; togglePlayTo(true); }
       else if (mode === 'manual') { S.autoNext = false; els.autoNext.checked = false; S.manual = true; }
       else { S.autoNext = false; els.autoNext.checked = false; S.manual = false; togglePlayTo(true); }
@@ -1504,10 +1855,10 @@
 
     window.addEventListener('keydown', function (e) {
       if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
-      if (e.key === 'ArrowRight') playMotion(S.current + 1);
-      else if (e.key === 'ArrowLeft') playMotion(S.current - 1);
+      if (e.key === 'ArrowRight') userPlay(S.current + 1);
+      else if (e.key === 'ArrowLeft') userPlay(S.current - 1);
       else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
-      else if (e.key === 'r' || e.key === 'R') playMotion(S.current);
+      else if (e.key === 'r' || e.key === 'R') userPlay(S.current);
     });
 
     window.addEventListener('resize', function () {
@@ -1607,6 +1958,10 @@
     }
     S.autoNext = !!(st && st.autoNext);
     els.autoNext.checked = S.autoNext;
+    S.autoPlayAll = !!(st && st.autoPlayAll);
+    els.playAll.checked = S.autoPlayAll;
+    if (S.autoPlayAll) els.playAllBar.classList.add('on');
+    applyHideMotions(!!(st && st.hideMotions));
     S.collapsed = (st && st.collapsed && typeof st.collapsed === 'object') ? st.collapsed : {};
 
     showOverlay('正在扫描模型…', '', false, true);
@@ -1630,10 +1985,12 @@
       else els.modelCount.title = '来源：内置兜底清单';
 
       renderModels();
-      var pick = S.models[0];
-      if (st && st.model) {
+      // 选初始模型，优先级：?model= 参数 > localStorage 记忆 > 列表第一个
+      var pick = S.models[0], pickKey = wantModelFromURL();
+      if (!pickKey && st && st.model) pickKey = st.model;
+      if (pickKey) {
         for (var i = 0; i < S.models.length; i++) {
-          if (S.models[i].key === st.model) { pick = S.models[i]; break; }
+          if (S.models[i].key === pickKey) { pick = S.models[i]; break; }
         }
       }
       switchModel(pick);
@@ -1645,6 +2002,59 @@
         window.__viewer = {
           S: S, els: els, app: S.app,
           mm: motionManager,
+          playMotion: playMotion,
+          userPlay: userPlay,
+          togglePlay: togglePlay,
+          startPlayAll: startPlayAll,
+          stopPlayAll: stopPlayAll,
+          switchModel: function (key) {
+            for (var i = 0; i < S.models.length; i++) {
+              if (S.models[i].key === key) return switchModel(S.models[i]);
+            }
+            return undefined;   // 找不到这个 key
+          },
+          // 模型是否已经切到位（自动化测试要等它变成 true 再采样）
+          switchedTo: function (key) { return !!(S.model && S.model.key === key && !S.busyModel); },
+          snap: function () {
+            var cm = coreModel();
+            if (!cm) return null;
+            return Array.prototype.slice.call(cm._model.parameters.values);
+          },
+          // 队列项内部状态：抖动/错位排查时最常看的几个量。
+          // 定格/暂停时队列里挂的是 S.pausedEntry，activeEntry() 也能拿到它；
+          // 但刚播完那一瞬间队列可能已空、定格项还没挂上，所以这里回落到 S.pausedEntry。
+          entry: function () {
+            var e = activeEntry() || S.pausedEntry;
+            if (!e) return null;
+            var mo = e._motion;
+            return {
+              start: e.getStartTime(), end: e.getEndTime(),
+              fadeInStart: e.getFadeInStartTime(), started: e.isStarted(),
+              finished: e.isFinished(), weight: e.getStateWeight(),
+              mWeight: mo && mo.getWeight ? mo.getWeight() : null,
+              fadeInSec: mo ? mo._fadeInSeconds : null,
+              fadeOutSec: mo ? mo._fadeOutSeconds : null,
+              dur: mo && mo.getDuration ? mo.getDuration() : null,
+              // ⚠️ mo.isLoop() 在本 SDK build 里恒为 false（setIsLoop 从未被调用），
+              //    所以这里给的是「本地权威标记」，别拿 SDK 那个值判断循环。
+              loop: isCurrentLoop(),
+              sdkLoop: mo && mo.isLoop ? mo.isLoop() : null
+            };
+          },
+          // 动作对象加载情况：null 表示该下标还没加载出来
+          groups: function () {
+            var mm2 = motionManager();
+            if (!mm2) return null;
+            var out = {};
+            for (var g in (mm2.motionGroups || {})) {
+              var defs = (mm2.definitions && mm2.definitions[g]) || [];
+              out[g] = (mm2.motionGroups[g] || []).map(function (o, i) {
+                if (!o) return null;
+                return defs[i] ? defs[i].File : '?';
+              });
+            }
+            return out;
+          },
           info: function () {
             var m = motionManager();
             var e = activeEntry();
@@ -1656,6 +2066,8 @@
               playing: S.playing,
               manual: S.manual,
               autoNext: S.autoNext,
+              autoPlayAll: S.autoPlayAll,
+              hideMotions: S.hideMotions,
               speed: S.speed,
               clock: S.motionClock,
               t: currentTime(),
@@ -1669,6 +2081,9 @@
               hasEntry: !!e,
               entryStart: e ? e.getStartTime() : null,
               entryEnd: e ? e.getEndTime() : null,
+              // ⚠️ 这个值是最重要的健康指标：动作权重。正常播放时必须收敛到 1；
+              //    如果是 0，说明动作参数根本没被写进模型（画面 = 只有呼吸/物理）。
+              entryWeight: e ? e.getStateWeight() : null,
               tickerStarted: S.app.ticker.started
             };
           }

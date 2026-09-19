@@ -2,3 +2,13 @@ Thumbs.db
 .DS_Store
 desktop.ini
 .idea
+.workbuddy-ai
+
+# 无头浏览器临时 profile（调试脚本跑出来的，别提交）
+.tmp-diag
+.tmp-*
+
+# 本机回归 / 诊断脚本，不进 Pages
+_regress.js
+_probe_*.js
+_diag_*.js
