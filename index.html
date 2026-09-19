@@ -58,6 +58,15 @@
   .brand .sub{ color:var(--text-faint); font-size:12px; white-space:nowrap; }
   .topbar .spacer{ flex:1 1 auto; }
 
+  /* GitHub 仓库入口 */
+  .gh-link{
+    display:flex; align-items:center; justify-content:center;
+    width:31px; height:31px; border-radius:9px; flex:0 0 auto;
+    border:1px solid var(--line-strong); background:var(--panel);
+    color:var(--text-dim); text-decoration:none; transition:.16s;
+  }
+  .gh-link:hover{ border-color:var(--text); color:var(--text); background:var(--panel-2); }
+
   .seg{
     display:flex; background:var(--panel-2); border:1px solid var(--line);
     border-radius:9px; padding:2px; gap:2px;
@@ -94,29 +103,9 @@
   .side-head .t{ font-size:12px; font-weight:700; letter-spacing:.9px; text-transform:uppercase; color:var(--text-faint); }
   .side-head .n{ font-size:12px; color:var(--text-dim); margin-top:4px; }
 
-  .model-list{ overflow-y:auto; padding:8px; flex:0 0 auto; max-height:44%; }
+  /* 模型列表独占整个侧栏（页面已无动作列表） */
+  .model-list{ overflow-y:auto; padding:8px; flex:1 1 auto; }
 
-  /* 隐藏动作列表时，模型列表吃掉整个侧栏高度 */
-  .sidebar.no-motions .model-list{ flex:1 1 auto; max-height:none; }
-  .sidebar.no-motions #motionPane{ display:none; }
-
-  /* 「连播全部」进行中的提示条 */
-  .playall-bar{
-    display:none; align-items:center; gap:8px;
-    margin:0 10px 8px; padding:7px 10px; border-radius:9px;
-    background:var(--accent-soft); border:1px solid #c3d5fb;
-    font-size:11.5px; font-weight:600; color:var(--accent);
-  }
-  .playall-bar.on{ display:flex; }
-  .playall-bar .spin{
-    width:10px; height:10px; border:2px solid #c3d5fb; border-top-color:var(--accent);
-    border-radius:50%; animation:spin .7s linear infinite; flex:0 0 10px;
-  }
-  .playall-bar .txt{ flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .playall-bar button{
-    border:0; background:transparent; color:var(--accent); cursor:pointer;
-    font:inherit; font-weight:700; padding:0 2px;
-  }
   .model-item{
     display:flex; align-items:center; gap:10px;
     padding:9px 10px; border-radius:10px; cursor:pointer;
@@ -166,11 +155,6 @@
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
 
-  .panel-title{
-    display:flex; align-items:center; justify-content:space-between;
-    padding:10px 16px 6px; font-size:11.5px; font-weight:700; letter-spacing:.9px;
-    text-transform:uppercase; color:var(--text-faint);
-  }
   .search{
     margin:0 12px 8px; position:relative;
   }
@@ -182,28 +166,6 @@
   }
   .search input:focus{ border-color:var(--accent); background:var(--panel); box-shadow:0 0 0 3px var(--accent-soft); }
   .search svg{ position:absolute; left:9px; top:50%; transform:translateY(-50%); opacity:.45; }
-
-  .motion-list{ flex:1 1 auto; overflow-y:auto; padding:2px 10px 14px; }
-  .motion-btn{
-    width:100%; text-align:left; border:1px solid var(--line); background:var(--panel);
-    border-radius:10px; padding:8px 11px; margin-bottom:6px; cursor:pointer;
-    display:flex; align-items:center; gap:9px; color:var(--text);
-    transition:.15s; font-size:12.5px;
-  }
-  .motion-btn:hover{ border-color:var(--accent); background:var(--accent-soft); }
-  .motion-btn.on{ border-color:var(--accent); background:var(--accent-soft); box-shadow:inset 0 0 0 1px var(--accent); }
-  .motion-btn .idx{
-    font-size:10.5px; font-weight:700; color:var(--text-faint);
-    background:var(--panel-2); border-radius:5px; padding:2px 5px;
-    min-width:22px; text-align:center; flex:0 0 auto;
-  }
-  .motion-btn.on .idx{ background:#fff; color:var(--accent); }
-  .motion-btn .label{ font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .motion-btn .dur{ margin-left:auto; font-size:10.5px; color:var(--text-faint); flex:0 0 auto; }
-  .motion-btn .tag{
-    font-size:9.5px; padding:1px 5px; border-radius:4px; font-weight:700;
-    background:#e6f6f4; color:#0e8a8a; flex:0 0 auto;
-  }
 
   /* ============ 舞台 ============ */
   .stage-wrap{ flex:1 1 auto; display:flex; flex-direction:column; min-width:0; min-height:0; }
@@ -313,6 +275,30 @@
     border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite;
     vertical-align:-1px; margin-right:6px;
   }
+  /* ============ 全屏：整个屏幕只有模型 ============ */
+  /* .app.fs 把顶栏 / 侧栏 / 底部控制条全部隐藏，舞台自动铺满视口 */
+  .app.fs .topbar,
+  .app.fs .sidebar,
+  .app.fs .controls{ display:none; }
+  .app.fs .badge,
+  .app.fs .stage-hint{ display:none !important; }
+
+  /* 全屏时唯一的浮层：退出按钮。平时几乎透明，鼠标移上去才显形 */
+  .exit-fs{
+    position:absolute; right:16px; top:16px; z-index:12;
+    width:36px; height:36px; border-radius:10px; cursor:pointer;
+    border:1px solid rgba(120,132,152,.35); background:rgba(255,255,255,.55);
+    color:var(--text-dim); opacity:.2; backdrop-filter:blur(6px);
+    display:none; align-items:center; justify-content:center;
+    transition:opacity .2s, background .2s;
+  }
+  .app.fs .exit-fs{ display:flex; }
+  .exit-fs:hover{ opacity:1; background:rgba(255,255,255,.94); }
+  .stage.dark .exit-fs{
+    background:rgba(20,26,35,.55); color:#c7d0de; border-color:rgba(160,175,200,.28);
+  }
+  .stage.dark .exit-fs:hover{ background:rgba(20,26,35,.94); }
+
   @media (max-width:860px){
     .sidebar{ width:230px; flex-basis:230px; }
     .brand .sub{ display:none; }
@@ -328,12 +314,20 @@
       <span class="sub" id="brandSub">—</span>
     </div>
     <div class="spacer"></div>
-    <div class="seg" id="modeSeg">
-      <button data-mode="normal" class="on">常规</button>
-      <button data-mode="manual">手动</button>
-      <button data-mode="auto">自动轮播</button>
-    </div>
+    <a class="gh-link" id="ghLink" href="https://github.com/weiraing/live2d_3"
+       target="_blank" rel="noopener noreferrer" title="打开 GitHub 仓库">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.4 7.4 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+      </svg>
+    </a>
     <button class="tbtn" id="btnTheme">深色舞台</button>
+    <button class="icon-btn" id="btnFull" title="全屏播放（整个屏幕只显示模型）">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+           stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2.2 6V2.2H6"/><path d="M10 2.2h3.8V6"/>
+        <path d="M13.8 10v3.8H10"/><path d="M6 13.8H2.2V10"/>
+      </svg>
+    </button>
   </header>
 
   <div class="main">
@@ -349,26 +343,6 @@
         <input type="text" id="modelSearch" placeholder="搜索模型…" autocomplete="off" />
       </div>
       <div class="model-list" id="modelList"></div>
-
-      <div class="playall-bar" id="playAllBar">
-        <span class="spin"></span>
-        <span class="txt" id="playAllTxt">连播全部动作…</span>
-        <button id="playAllStop" title="停止连播">停止</button>
-      </div>
-
-      <div id="motionPane">
-        <div class="panel-title">
-          <span>动作列表</span>
-          <span id="motionCount" style="text-transform:none;letter-spacing:0;font-weight:600;"></span>
-        </div>
-        <div class="search">
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7">
-            <circle cx="6.8" cy="6.8" r="4.6"/><path d="M10.3 10.3 14 14"/>
-          </svg>
-          <input type="text" id="motionSearch" placeholder="筛选动作…" autocomplete="off" />
-        </div>
-        <div class="motion-list" id="motionList"></div>
-      </div>
     </aside>
 
     <div class="stage-wrap">
@@ -378,7 +352,14 @@
           <div class="b1" id="badgeName">—</div>
           <div class="b2" id="badgeMotion">—</div>
         </div>
-        <div class="stage-hint" id="stageHint">按住拖动可移动位置 · 滚轮缩放 · 双击复位</div>
+        <div class="stage-hint" id="stageHint">按住拖动可移动位置 · 滚轮缩放 · 双击复位 · 右上角全屏</div>
+        <button class="exit-fs" id="btnExitFs" title="退出全屏（Esc）">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 2.2V6H2.2"/><path d="M2.2 10H6v3.8"/>
+            <path d="M10 13.8V10h3.8"/><path d="M13.8 6H10V2.2"/>
+          </svg>
+        </button>
         <div class="overlay" id="overlay">
           <div class="spinner" id="ovSpinner"></div>
           <div class="msg" id="ovMsg">正在初始化…</div>
@@ -388,30 +369,13 @@
 
       <div class="controls">
         <div class="ctl">
-          <button class="icon-btn" id="btnPrev" title="上一个动作">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M10.5 3.2v9.6L4.2 8z"/><rect x="2.6" y="3.2" width="1.6" height="9.6" rx=".8"/></svg>
-          </button>
           <button class="icon-btn primary" id="btnPlay" title="播放 / 暂停">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" id="icoPlay"><path d="M4.4 2.9v10.2L13 8z"/></svg>
             <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" id="icoPause" style="display:none"><rect x="4" y="3" width="3" height="10" rx="1"/><rect x="9" y="3" width="3" height="10" rx="1"/></svg>
           </button>
-          <button class="icon-btn" id="btnNext" title="下一个动作">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M5.5 3.2v9.6L11.8 8z"/><rect x="11.8" y="3.2" width="1.6" height="9.6" rx=".8"/></svg>
-          </button>
-          <button class="icon-btn" id="btnReplay" title="重播当前动作">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
-              <path d="M13.2 8a5.2 5.2 0 1 1-1.6-3.7"/><path d="M13.2 2.4v3.1h-3.1"/>
-            </svg>
-          </button>
         </div>
 
         <div class="divider"></div>
-
-        <div class="ctl">
-          <label>进度</label>
-          <input type="range" id="progress" min="0" max="1000" value="0" step="1" style="width:190px;" />
-          <span class="val" id="progressVal">0.00s</span>
-        </div>
 
         <div class="ctl">
           <label>速度</label>
@@ -427,13 +391,9 @@
 
         <div class="divider"></div>
 
-        <label class="sw" title="勾选后，切到任意模型都会从第 1 个动作开始依次播完该模型的全部动作">
-          <input type="checkbox" id="playAll" /><span class="track"></span><span>切模型后连播全部</span>
-        </label>
-        <label class="sw" title="非循环动作播完后自动跳下一个"><input type="checkbox" id="autoNext" /><span class="track"></span><span>播完自动下一个</span></label>
-        <label class="sw" title="隐藏左侧的动作列表，把空间让给模型列表"><input type="checkbox" id="hideMotions" /><span class="track"></span><span>隐藏动作列表</span></label>
         <label class="sw"><input type="checkbox" id="showWire" /><span class="track"></span><span>显示网格</span></label>
         <button class="tbtn" id="btnReset">复位视图</button>
+        <button class="tbtn" id="btnFull2" style="margin-left:auto;">全屏播放</button>
       </div>
     </div>
   </div>
@@ -448,14 +408,14 @@
 
   var CORE_URL = 'assets/live2dcubismcore.min.js';
   var STORAGE_KEY = 'l2d-viewer-state-v1';
+  // GitHub 仓库地址。默认值用于本地预览（本地无法从域名推断仓库），
+  // 部署在 *.github.io 上时会自动按当前地址推断出真实仓库。
+  var REPO_URL = 'https://github.com/weiraing/live2d_3';
 
   var els = {
     modelList:    document.getElementById('modelList'),
     modelCount:   document.getElementById('modelCount'),
     modelSearch:  document.getElementById('modelSearch'),
-    motionList:   document.getElementById('motionList'),
-    motionCount:  document.getElementById('motionCount'),
-    motionSearch: document.getElementById('motionSearch'),
     host:         document.getElementById('live2d-canvas-host'),
     stage:        document.getElementById('stage'),
     overlay:      document.getElementById('overlay'),
@@ -466,30 +426,22 @@
     badgeName:    document.getElementById('badgeName'),
     badgeMotion:  document.getElementById('badgeMotion'),
     brandSub:     document.getElementById('brandSub'),
-    btnPrev:      document.getElementById('btnPrev'),
-    btnNext:      document.getElementById('btnNext'),
     btnPlay:      document.getElementById('btnPlay'),
-    btnReplay:    document.getElementById('btnReplay'),
     icoPlay:      document.getElementById('icoPlay'),
     icoPause:     document.getElementById('icoPause'),
-    progress:     document.getElementById('progress'),
-    progressVal:  document.getElementById('progressVal'),
     speed:        document.getElementById('speed'),
     speedVal:     document.getElementById('speedVal'),
     zoom:         document.getElementById('zoom'),
     zoomVal:      document.getElementById('zoomVal'),
-    autoNext:     document.getElementById('autoNext'),
-    playAll:      document.getElementById('playAll'),
-    hideMotions:  document.getElementById('hideMotions'),
-    motionPane:   document.getElementById('motionPane'),
-    playAllBar:   document.getElementById('playAllBar'),
-    playAllTxt:   document.getElementById('playAllTxt'),
-    playAllStop:  document.getElementById('playAllStop'),
     showWire:     document.getElementById('showWire'),
     btnReset:     document.getElementById('btnReset'),
     btnTheme:     document.getElementById('btnTheme'),
-    modeSeg:      document.getElementById('modeSeg')
+    btnFull:      document.getElementById('btnFull'),
+    btnFull2:     document.getElementById('btnFull2'),
+    btnExitFs:    document.getElementById('btnExitFs'),
+    ghLink:       document.getElementById('ghLink')
   };
+  var appEl = document.querySelector('.app');
 
   // ---------- 状态 ----------
   var S = {
@@ -497,7 +449,7 @@
     model: null,         // 当前模型
     alias: {},           // 友好名称映射
     motionNames: {},     // 动作友好名称映射
-    motions: [],         // 当前模型的动件文件列表
+    motions: [],         // 当前模型的动作文件列表
     current: -1,         // 当前动作索引
     source: '',          // 模型清单来源：github / index / fallback
     collapsed: {},       // 分组折叠状态
@@ -507,10 +459,8 @@
     speed: 1,
     motionClock: 0,      // 自维护的动作时间轴（秒），见 tickProgress
     holdTime: 0,         // 动作播完后定格的时间点
-    pausedEntry: null,   // 暂停/定位/定格时挂在队列里的那一项（只挂一次，避免每帧重入队导致抖动）
+    pausedEntry: null,   // 暂停/定格时挂在队列里的那一项（只挂一次，避免每帧重入队导致抖动）
     finished: false,     // 当前定格是不是「自然播完」造成的（据此决定按播放是重播还是续播）
-    manual: false,       // 手动模式：用 seek 控制进度
-    seekRequest: null,   // 手动模式下的目标时间
     view: { x: 0, y: 0, scale: 1 },
     dragging: false,
     dragStart: null,
@@ -518,20 +468,12 @@
     wireOn: false,
     busyModel: false,
     pendingModel: null,  // 载入中又点了别的模型时暂存下来，载完再切过去
-    autoNext: false,     // 单模型内：播完自动跳下一个
-    autoPlayAll: false,  // 切模型后自动从第 1 个动作依次连播全部
-    hideMotions: false,  // 隐藏左侧动作列表，只留模型列表
+    autoPlayAll: true,   // 固定开启：模型载入后从第 1 个动作依次播完全部，再从头循环
+    fullscreen: false,   // 是否处于「全屏只显示模型」模式
     primed: false        // 动作队列是否已由 playMotion 初始化好（见 tickProgress 开头）
   };
 
   // ---------- 工具 ----------
-  function qs(o) { return Object.keys(o).filter(function (k) { return o[k]; }).map(function (k) { return k + '=' + o[k]; }).join('&'); }
-
-  function fmtSec(s) {
-    if (!isFinite(s)) return '—';
-    return s.toFixed(2) + 's';
-  }
-
   function prettyName(base) {
     var n = String(base).replace(/\.motion3\.json$/i, '').replace(/-/g, '_');
     var map = S.alias[base] || S.alias[n] || S.motionNames[base] || S.motionNames[n];
@@ -562,28 +504,13 @@
     els.ovDetail.textContent = detail || '';
   }
   function hideOverlay() { els.overlay.classList.add('hide'); }
-  // 连播结束时用：只收掉遮罩，不改变任何播放状态
-  function hideOverlaySoft() { els.overlay.classList.add('hide'); }
-
-  // 隐藏动作列表：侧栏只留模型列表，模型列表吃掉整高。
-  // 隐藏时动作仍在按时间轴播放，只是不给按钮了。
-  function applyHideMotions(on) {
-    S.hideMotions = !!on;
-    var sb = document.querySelector('.sidebar');
-    if (sb) sb.classList.toggle('no-motions', S.hideMotions);
-    if (els.hideMotions) els.hideMotions.checked = S.hideMotions;
-  }
 
   function saveState() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         model: S.model ? S.model.key : null,
-        motion: S.current,
         dark: els.stage.classList.contains('dark'),
         speed: S.speed,
-        autoNext: S.autoNext,
-        autoPlayAll: S.autoPlayAll,
-        hideMotions: S.hideMotions,
         collapsed: S.collapsed
       }));
     } catch (e) { /* 忽略隐私模式下的写入失败 */ }
@@ -636,6 +563,16 @@
       return { owner: m[1], repo: seg[0] || (m[1] + '.github.io') };
     }
     return null;
+  }
+
+  // 顶栏的 GitHub 图标指向哪里：部署在 *.github.io 上时按当前地址推断出仓库，
+  // 推不出来（本地预览 / 自定义域名）就用 REPO_URL。
+  function setupRepoLink() {
+    if (!els.ghLink) return;
+    var info = inferRepo();
+    var url = info ? ('https://github.com/' + info.owner + '/' + info.repo) : REPO_URL;
+    els.ghLink.href = url;
+    els.ghLink.title = '打开 GitHub 仓库 · ' + url;
   }
 
   // A. 通过 GitHub API 递归枚举仓库里的 .model3.json
@@ -841,25 +778,13 @@
     });
   }
 
-  function renderMotions() {
-    var kw = els.motionSearch.value.trim().toLowerCase();
-    els.motionList.innerHTML = '';
-    var shown = 0;
-    S.motions.forEach(function (mo, i) {
-      var label = prettyName(mo.base);
-      if (kw && label.toLowerCase().indexOf(kw) === -1 && mo.base.toLowerCase().indexOf(kw) === -1) return;
-      shown++;
-      var btn = document.createElement('button');
-      btn.className = 'motion-btn' + (i === S.current ? ' on' : '');
-      btn.innerHTML =
-        '<span class="idx">' + (i + 1) + '</span>' +
-        '<span class="label">' + escapeHtml(label) + '</span>' +
-        (mo.loop ? '<span class="tag">循环</span>' : '') +
-        '<span class="dur">' + (mo.duration ? mo.duration.toFixed(1) + 's' : '') + '</span>';
-      btn.addEventListener('click', function () { userPlay(i); });
-      els.motionList.appendChild(btn);
-    });
-    els.motionCount.textContent = kw ? shown + '/' + S.motions.length : S.motions.length + ' 个';
+  // 页面里不再有动作列表，当前动作的序号与名称直接写在舞台左上角的信息条上。
+  function renderMotionBadge() {
+    var mo = S.motions[S.current];
+    if (!mo) { els.badgeMotion.textContent = '—'; return; }
+    els.badgeMotion.textContent =
+      (S.current + 1) + '/' + S.motions.length + ' · ' + prettyName(mo.base) +
+      (mo.duration ? ' · ' + mo.duration.toFixed(1) + 's' : '');
   }
 
   // ---------- 3. 载入模型 ----------
@@ -923,21 +848,18 @@
       S.motions = parseMotions(mf);
       S.current = -1;
       els.badgeName.textContent = modelTitle(m);
+      els.badgeMotion.textContent = '—';
       els.badge.style.display = '';
       renderModels();
-      renderMotions();
       return probeDurations(baseUrl);
     }).then(function () {
-      renderMotions();
+      renderMotionBadge();
       showOverlay('正在载入模型 ' + modelTitle(m) + ' …', '解析纹理与网格', false, true);
       return loadIntoStage(manifestUrl);
     }).then(function () {
       // 先保证有动作在播，再撤掉遮罩，避免露出空白帧。
-      // 连播模式下从第 1 个开始依次播完（不再单独 playMotion(0)，否则会重置一次）。
-      if (S.motions.length) {
-        if (S.autoPlayAll) { startPlayAll(); }
-        else { playMotion(0, true); }
-      }
+      // 载入后一律从第 1 个动作开始，依次播完全部动作再从头循环。
+      if (S.motions.length) playMotion(0, true);
       S.app.render();
       // 至少展示 350ms，避免加载过快时遮罩闪烁
       var wait = Math.max(0, 350 - (Date.now() - t0));
@@ -959,9 +881,7 @@
       S.l2dModel = null;
       S.motions = [];
       S.current = -1;
-      els.motionList.innerHTML = '';
       els.badge.style.display = 'none';
-      els.progress.disabled = true;
       showOverlay('模型载入失败：' + modelTitle(m), String((e && e.message) || e), true, false);
       drainPendingModel();
     });
@@ -979,8 +899,6 @@
   // 会带到新模型上，表现为「切过来不会自动播放」。
   function resetPlayState() {
     S.playing = true;
-    S.manual = false;
-    S.seekRequest = null;
     S.finished = false;
     S.motionClock = 0;
     S.holdTime = 0;
@@ -1253,22 +1171,37 @@
     return false;
   }
 
-  // 用户主动选/切动作：要退出「连播全部」，否则刚点完就被连播逻辑顶掉。
+  // 跳到指定动作（键盘快捷键用）。跳完仍会沿着队列继续往下播。
   function userPlay(index) {
-    if (S.autoPlayAll) {
-      S.autoPlayAll = false;
-      els.playAll.checked = false;
-      els.playAllBar.classList.remove('on');
-      saveState();
-    }
     playMotion(index);
+  }
+
+  // ---------- 动作没启动起来时的自动恢复 ----------
+  // 有两种情况会让队列变空、画面卡死（时间轴永远是 0）：
+  //   · 刚切完模型，动作对象还在后台异步加载（motionPreload:'ALL' 不是同步的），
+  //     这一刻 findMotionObject 拿不到东西；
+  //   · 切换的那一瞬间 playMotion 作用在了上一支模型遗留的队列上
+  //     （两组模型的组名和动作文件名一样时尤其容易发生，比如都是 '' 组 + motions/complete.motion3.json），
+  //     新模型的队列因此是空的。
+  // 两种情况的共同点都是「队列里既没有正在播的动作、也没有定格项」。
+  // 所以只要发现这个状态就重新启动当前动作：每 300ms 一次、不设次数上限 ——
+  // 动作一变得可用就自动接上，永远不会出现「切完模型什么都不播」。
+  var START_RETRY_MS = 300;
+  var lastStartAt = 0, startRecoveryCount = 0;
+
+  function tickStartRecovery() {
+    if (!S.playing) return;                       // 暂停时不打扰
+    if (activeEntry() || S.pausedEntry) return;    // 队列里有东西就说明是正常状态
+    if (Date.now() - lastStartAt < START_RETRY_MS) return;
+    lastStartAt = Date.now();
+    startRecoveryCount++;
+    playMotion(S.current < 0 ? 0 : S.current, true);
   }
 
   function playMotion(index, silent) {
     if (!S.motions.length) return;
     index = (index + S.motions.length) % S.motions.length;
     S.current = index;
-    S.seekRequest = null;
     S.motionClock = 0;
     S.holdTime = 0;
     S.finished = false;
@@ -1279,10 +1212,7 @@
     var mm = motionManager();
     if (mm) {
       try { mm.stopAllMotions(); } catch (e) {}
-      var group = mo.group || '';
       var motionObj = findMotionObject(mm, mo);
-      // 兜底：同组随机播一个（只有实在找不到目标动作时才会走到）
-      if (!motionObj) { try { mm.startRandomMotion(group, 3); } catch (e2) {} }
       if (motionObj) {
         mm.queueManager.startMotion(motionObj, false);
         var qe = activeEntry();
@@ -1303,18 +1233,17 @@
         mm.queueManager._doUpdateTime = 0;
         mm.playing = true;
       }
+      // 这里刻意不做「随机播一个同组动作」的兜底：那会打乱「依次播完全部动作」的顺序，
+      // 信息条上的序号也会和实际在播的动作对不上。拿不到动作对象时交给 tickStartRecovery。
     } else if (S.l2dModel) {
       try { S.l2dModel.motion(mo.group || '', 0).catch(function () {}); } catch (e) {}
     }
 
+    lastStartAt = Date.now();   // 给 tickStartRecovery 一个节流基准
     S.playing = true;
-    S.manual = false;
-    S.seekRequest = null;
     S.primed = true;     // 队列已初始化好，tickProgress 可以开始推进了
     setPlayIcon();
-    renderMotions();
-    els.badgeMotion.textContent = prettyName(mo.base) + (mo.duration ? ' · ' + mo.duration.toFixed(1) + 's' : '');
-    els.progress.disabled = false;
+    renderMotionBadge();
     if (!silent) saveState();
   }
 
@@ -1331,14 +1260,7 @@
     if (mm) { try { mm.playing = S.playing; } catch (e) {} }
 
     if (S.playing) {
-      // 从「拖动定位」恢复：重播当前动作
-      if (S.manual) {
-        S.manual = false;
-        S.seekRequest = null;
-        playMotion(S.current, true);
-        return setPlayIcon();
-      }
-      // 从定格恢复。已经走到末尾（自然播完 / 拖到最后）就重播；
+      // 从定格恢复。已经走到末尾（自然播完）就重播；
       // 中途定格则要「从定格位置续播」，不能简单重播，否则画面会跳回开头。
       if (S.pausedEntry) {
         var hd = currentDuration();
@@ -1394,7 +1316,6 @@
     if (!im || !mm || !mm.queueManager || !cm) return;
 
     var dur = currentDuration();
-    els.progress.disabled = !(dur > 0);
 
     // 帧间隔（秒）。PIXI ticker 回调给的是「帧数」，需除以目标帧率。
     var dt;
@@ -1413,38 +1334,18 @@
     // 让下面的分支走「定格」路径而不是「正常推进」路径。
     var holding = !!S.pausedEntry && e === S.pausedEntry;
 
-    // 时间轴推进：暂停 / 手动（拖动）/ 定格时停表
-    if (!holding && e && S.playing && !S.manual) {
+    // 队列空、也没有定格项 = 什么都没在播（动作压根没启动起来）→ 重新启动当前动作。
+    // 见 tickStartRecovery 的说明：这是「切完模型不播」的兜底。
+    if (!holding && !e && !S.pausedEntry) tickStartRecovery();
+
+    // 时间轴推进：暂停 / 定格时停表
+    if (!holding && e && S.playing) {
       S.motionClock += dt * S.speed;
       S.holdTime = Math.min(S.motionClock, dur > 0 ? dur : S.motionClock);
     }
 
-    // 手动拖动：把目标位置直接写成时间轴位置
-    if (S.manual && S.seekRequest !== null) {
-      S.motionClock = S.seekRequest * dur;
-      S.holdTime = S.motionClock;
-      S.seekRequest = null;
-      S.finished = false;   // 拖动定位是中途定格，按播放应当续播
-      // 拖动定位也走定格项：重新挂一次，终点始终保持在「远离目标点」的大值上。
-      // 曾经这里写成 setEndTime(holdTime)，导致 endTime == 求值时刻，
-      // doUpdateMotion 一进门就被 isFinished() 挡掉、动作参数根本没写进去 —— 抖动就是这么来的。
-      if (S.pausedEntry) {
-        try {
-          var qs = mm.queueManager;
-          S.pausedEntry.setStartTime(0);
-          S.pausedEntry.setEndTime(HOLD_END);
-          // 必须把淡入起点往回拨，否则 fadeIn 权重为 0、参数写不进去
-          S.pausedEntry.setFadeInStartTime(S.holdTime - motionFadeIn(S.pausedEntry._motion) - 0.001);
-          qs._doUpdateTime = S.holdTime;
-          qs.doUpdateMotion(cm, S.holdTime);
-        } catch (err) {}
-      } else {
-        mountHoldEntry(mm, cm, S.holdTime);
-      }
-    }
-
     if (holding) {
-      // 暂停 / 拖动定位 / 播完定格：起止时间已在入队时定死，
+      // 暂停 / 播完定格：起止时间已在入队时定死，
       // 每帧按同一时刻重放一次即可，参数恒定不变 → 画面稳定不抖。
       S.motionClock = S.holdTime;
       var qh = mm.queueManager;
@@ -1455,24 +1356,9 @@
       var qt = mm.queueManager;
       qt._doUpdateTime = S.motionClock;
       try { qt.doUpdateMotion(cm, S.motionClock); } catch (err) {}
-    } else if (!S.manual && S.holdTime > 0 && isCurrentLoop() && !S.autoPlayAll && !S.autoNext && S.playing) {
-      // 循环动作播到头 —— 自己重播一次（SDK 不会帮我们绕回起点）。
-      //
-      // ⚠️ 这个 SDK build 里 Cubism4Motion 的 _isLoop 永远是 false：
-      //    全文件里 setIsLoop 只有方法定义、没有任何调用点，所以
-      //    「a >= duration 时 setStartTime(i) 绕回起点」那段死代码永远走不到，
-      //    循环动作到头后 SDK 会直接把队列项标记 finished 并摘掉。
-      //    表现就是 Idle 播一遍就停住。要真的循环，只能在这里手动重播。
-      //
-      // 连播（autoPlayAll）/ 自动下一个（autoNext）模式下不在这里重播：
-      //   它们由 tickPlayAllLoopDwell 或自动推进逻辑接管（循环动作靠 LOOP_DWELL 计时走）。
-      S.finished = false;
-      S.motionClock = 0;
-      S.holdTime = 0;
-      playMotion(S.current, true);
-    } else if (!S.manual && S.holdTime > 0 && !isCurrentLoop()) {
+    } else if (S.holdTime > 0 && !isCurrentLoop()) {
       // 非循环动作播完后 SDK 会把队列项移除，此时把最后一帧续上，
-      // 避免参数回到初始姿势、进度条突然归零。
+      // 避免参数回到初始姿势。
       // 注意：这里必须「只入队一次」，否则每帧重新 startMotion 会让动作
       // 在起始姿势与末帧之间反复横跳，表现为人物持续快速抖动。
       //
@@ -1485,6 +1371,8 @@
       S.motionClock = S.holdTime;
       mountHoldEntry(mm, cm, S.holdTime);
     }
+    // 循环动作（Idle 之类）不会自然播完，这里不做处理：
+    // 页面固定处于「依次播完全部动作」模式，循环动作由 tickPlayAllLoopDwell 按停留时长推走。
 
     // 交给 SDK 完成动作求值、呼吸/眨眼/物理/姿势，并最终把参数提交到 drawable。
     //
@@ -1522,84 +1410,44 @@
 
     if (dur <= 0) { tickPlayAllLoopDwell(); return; }
 
-    // 定格/暂停时进度条直接读时间轴位置；正常播放时按队列项算，
-    // 动作被移除（播完）时停在末端而不是归零
-    var t = holding ? Math.min(S.holdTime, dur)
-      : (e ? currentTime() : Math.min(S.holdTime, dur));
-    var ratio = Math.max(0, Math.min(1, t / dur));
-    els.progress.value = String(Math.round(ratio * 1000));
-    els.progressVal.textContent = fmtSec(t) + ' / ' + dur.toFixed(2) + 's';
-
-    // 连播模式下，循环动作靠停留计时推进（它不会自然播完）
+    // 循环动作靠停留计时推进（它不会自然播完）
     tickPlayAllLoopDwell();
-    updatePlayAllTxt();
 
-    // 播完自动切下一个。两种模式共用这一处判断：
-    //   S.autoPlayAll —— 切换模型后从第 1 个依次播完全部动作，播到最后停止
-    //   S.autoNext    —— 只在本模型内循环往下切，到最后回到第 1 个
-    // 循环动作（Idle 之类）不会自然播完，所以两种模式都要跳过它。
-    var autoAdvance = (S.autoPlayAll || S.autoNext) && !S.manual && !holding;
-    if (autoAdvance && !isCurrentLoop()) {
-      var done = (!e) || (t >= dur - 0.02);
-      if (done && !S._advancing) {
+    // 播完自动切下一个；走到最后一个之后再回到第 1 个，形成无限循环。
+    // 循环动作（Idle 之类）不会自然播完，交给上面的 tickPlayAllLoopDwell 推走。
+    if (!holding && !isCurrentLoop() && !S._advancing) {
+      // 队列项为空 = 动作已被 SDK 摘掉（播完）；队列项还在时按时间轴位置判断。
+      // t 用 holdTime 兜底：动作播完的那一帧 holdTime 已经停在末尾。
+      var t = e ? currentTime() : Math.min(S.holdTime, dur);
+      var done = (!e && S.holdTime >= dur - 0.02) || (e && t >= dur - 0.02);
+      if (done) {
+        S._advancing = true;
+        setTimeout(function () { S._advancing = false; }, 450);
         var next = S.current + 1;
-        var last = next >= S.motions.length;
-        if (last && S.autoPlayAll) {
-          // 全部动作播完 —— 收尾：停在第 1 个动作的末帧上，不自动重播，
-          // 免得用户以为它「停不下来」。
-          stopPlayAll();
-        } else {
-          S._advancing = true;
-          setTimeout(function () { S._advancing = false; }, 450);
-          playMotion(last ? 0 : next, true);
-        }
+        playMotion(next >= S.motions.length ? 0 : next, true);
       }
     }
   }
 
-  // ---------- 连播全部 ----------
-  // 「切模型后连播全部」：切完模型从第 1 个动作开始，依次播到底。
-  // 循环动作没有「播完」的瞬间，所以遇到循环动作给它一个固定停留时间再往下走，
-  // 否则连播会永远卡在 Idle 上。
-  var LOOP_DWELL = 6;   // 秒：连播时循环动作最多停留多久
+  // ---------- 自动依次播完全部动作 ----------
+  // 页面固定处于「依次播完全部动作」模式：模型载入后从第 1 个动作开始，
+  // 一个接一个播完，最后一个播完再回到第 1 个，无限循环。
+  // 循环动作（Idle 之类）没有「播完」的瞬间，所以给它一个固定停留时间再往下走，
+  // 否则会永远卡在 Idle 上。
+  var LOOP_DWELL = 6;   // 秒：循环动作最多停留多久
 
-  function startPlayAll() {
-    if (!S.motions.length) return;
-    S.autoPlayAll = true;
-    S.autoNext = false;
-    els.autoNext.checked = false;
-    els.playAllBar.classList.add('on');
-    updatePlayAllTxt();
-    playMotion(0, true);
-  }
-
-  function stopPlayAll() {
-    S.autoPlayAll = false;
-    els.playAllBar.classList.remove('on');
-    // 连播结束时不额外停表，让画面就停在最后一个动作的末帧
-    hideOverlaySoft();
-  }
-
-  function updatePlayAllTxt() {
-    if (!S.autoPlayAll) return;
-    var n = S.motions.length;
-    var i = Math.max(0, S.current) + 1;
-    els.playAllTxt.textContent = '连播全部动作 ' + i + '/' + n + ' · ' + (S.motions[S.current] ? prettyName(S.motions[S.current].base) : '');
-  }
-
-  // 连播时循环动作靠这个兜底推进：进循环动作后开始计时，超过 LOOP_DWELL 就跳下一个
+  // 循环动作靠这个兜底推进：进循环动作后开始计时，超过 LOOP_DWELL 就跳下一个
   var loopEnterAt = 0, loopEnterIndex = -1;
   function tickPlayAllLoopDwell() {
-    if (!S.autoPlayAll || S.manual) return;
+    if (!S.autoPlayAll) return;
     if (!isCurrentLoop()) { loopEnterIndex = -1; return; }
     if (loopEnterIndex !== S.current) { loopEnterIndex = S.current; loopEnterAt = Date.now(); return; }
     if (Date.now() - loopEnterAt < LOOP_DWELL * 1000) return;
     if (S._advancing) return;
-    var next = S.current + 1;
-    if (next >= S.motions.length) { stopPlayAll(); return; }
     S._advancing = true;
     setTimeout(function () { S._advancing = false; }, 450);
-    playMotion(next, true);
+    var next = S.current + 1;
+    playMotion(next >= S.motions.length ? 0 : next, true);
   }
 
   // 定格队列项的终点时间。必须远大于任何动作时长，让 isFinished() 恒为 false，
@@ -1760,36 +1608,13 @@
   }
 
   function bindUI() {
-    els.btnPrev.addEventListener('click', function () { userPlay(S.current - 1); });
-    els.btnNext.addEventListener('click', function () { userPlay(S.current + 1); });
     els.btnPlay.addEventListener('click', togglePlay);
-    els.btnReplay.addEventListener('click', function () { userPlay(S.current); });
     els.btnReset.addEventListener('click', resetView);
-
-    els.motionSearch.addEventListener('input', renderMotions);
+    els.btnFull.addEventListener('click', toggleFullscreen);
+    els.btnFull2.addEventListener('click', toggleFullscreen);
+    els.btnExitFs.addEventListener('click', exitFullscreen);
 
     els.modelSearch.addEventListener('input', renderModels);
-
-    els.progress.addEventListener('input', function () {
-      S.manual = true;
-      S.playing = false;
-      setPlayIcon();
-      var ratio = parseFloat(els.progress.value) / 1000;
-      var dur = currentDuration();
-      els.progressVal.textContent = fmtSec(ratio * dur) + (dur ? ' / ' + dur.toFixed(2) + 's' : '');
-      // 拖动进度条时给时间轴加一个「暂停锚点」：
-      // 必须把队列项就地钉死，否则 SDK 会继续按自己的时间基推进，
-      // 松手瞬间会跳回原位置。
-      if (!S.pausedEntry && S.l2dModel) {
-        var im = S.l2dModel.internalModel, mmp = motionManager(), cmp = coreModel();
-        if (im && mmp && mmp.queueManager && cmp) {
-          S.holdTime = ratio * dur;
-          mountHoldEntry(mmp, cmp, S.holdTime);
-        }
-      }
-      // 手动模式下由时间轴拖动驱动动作进度（见 tickProgress 的 manual 分支）
-      S.seekRequest = ratio;
-    });
 
     els.speed.addEventListener('input', function () {
       S.speed = parseFloat(els.speed.value) / 100;
@@ -1801,35 +1626,6 @@
       setZoomPercent(parseFloat(els.zoom.value));
     });
 
-    els.autoNext.addEventListener('change', function () {
-      S.autoNext = els.autoNext.checked;
-      if (S.autoNext && S.autoPlayAll) { S.autoPlayAll = false; els.playAll.checked = false; els.playAllBar.classList.remove('on'); }
-      saveState();
-    });
-
-    els.playAll.addEventListener('change', function () {
-      if (els.playAll.checked) {
-        // 立即对当前模型生效，不用等下一次切换
-        S.autoNext = false;
-        els.autoNext.checked = false;
-        startPlayAll();
-      } else {
-        stopPlayAll();
-      }
-      saveState();
-    });
-
-    els.playAllStop.addEventListener('click', function () {
-      els.playAll.checked = false;
-      stopPlayAll();
-      saveState();
-    });
-
-    els.hideMotions.addEventListener('change', function () {
-      applyHideMotions(els.hideMotions.checked);
-      saveState();
-    });
-
     els.showWire.addEventListener('change', function () { toggleWire(els.showWire.checked); });
 
     els.btnTheme.addEventListener('click', function () {
@@ -1839,42 +1635,89 @@
       saveState();
     });
 
-    els.modeSeg.addEventListener('click', function (e) {
-      var b = e.target.closest('button');
-      if (!b) return;
-      [].forEach.call(els.modeSeg.children, function (c) { c.classList.remove('on'); });
-      b.classList.add('on');
-      var mode = b.dataset.mode;
-      // 手动 / 自动轮播都会接管播放推进，先退出连播模式避免两套逻辑打架
-      if (S.autoPlayAll) { S.autoPlayAll = false; els.playAll.checked = false; els.playAllBar.classList.remove('on'); }
-      if (mode === 'auto') { S.autoNext = true; els.autoNext.checked = true; togglePlayTo(true); }
-      else if (mode === 'manual') { S.autoNext = false; els.autoNext.checked = false; S.manual = true; }
-      else { S.autoNext = false; els.autoNext.checked = false; S.manual = false; togglePlayTo(true); }
-      saveState();
-    });
-
     window.addEventListener('keydown', function (e) {
       if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
       if (e.key === 'ArrowRight') userPlay(S.current + 1);
       else if (e.key === 'ArrowLeft') userPlay(S.current - 1);
       else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
       else if (e.key === 'r' || e.key === 'R') userPlay(S.current);
+      else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
+      // 浏览器原生全屏由 Esc 自己处理；这里兜底「请求被拒、只剩 CSS 全屏」的情况
+      else if (e.key === 'Escape' && S.fullscreen) exitFullscreen();
     });
 
-    window.addEventListener('resize', function () {
-      var keep = parseFloat(els.zoom.value) || 100;
-      var box = stageSize();
-      if (S.app) S.app.renderer.resize(box.w, box.h);
-      setZoomPercent(keep);
-    });
+    window.addEventListener('resize', relayout);
   }
 
-  function togglePlayTo(on) {
-    if (!S.l2dModel) return;
-    S.playing = on;
-    var mm = motionManager();
-    if (mm) { try { mm.playing = on; } catch (e) {} }
-    setPlayIcon();
+  // 舞台尺寸变了（窗口缩放 / 进出全屏）之后重新排布：
+  // 渲染器跟着改尺寸，并按原来的缩放百分比重新适配模型。
+  function relayout() {
+    var keep = parseFloat(els.zoom.value) || 100;
+    var box = stageSize();
+    if (S.app) S.app.renderer.resize(box.w, box.h);
+    if (S.wireOn) drawWire(S.wire);
+    setZoomPercent(keep);
+  }
+
+  // ---------- 全屏：整个屏幕只显示模型 ----------
+  // 同时做两件事：
+  //   1. 请求浏览器原生全屏（连地址栏一起收掉）；
+  //   2. 给 .app 加 .fs 类，隐藏顶栏 / 侧栏 / 底部控制条。
+  // 第 2 步独立生效，所以即使原生全屏被拒绝（例如页面跑在 iframe 里），
+  // 仍然能得到「页面内全屏」的效果。
+  function toggleFullscreen() {
+    if (S.fullscreen) exitFullscreen(); else enterFullscreen();
+  }
+
+  function enterFullscreen() {
+    S.fullscreen = true;
+    appEl.classList.add('fs');
+    var el = document.documentElement;
+    var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+    if (req) {
+      try {
+        var p = req.call(el);
+        if (p && p.catch) p.catch(function () { /* 被拒绝也没关系，CSS 全屏已经生效 */ });
+      } catch (e) {}
+    }
+    syncFullscreenLayout();
+  }
+
+  function exitFullscreen() {
+    S.fullscreen = false;
+    appEl.classList.remove('fs');
+    var d = document;
+    if (d.fullscreenElement || d.webkitFullscreenElement || d.msFullscreenElement) {
+      var ex = d.exitFullscreen || d.webkitExitFullscreen || d.msExitFullscreen;
+      if (ex) {
+        try {
+          var p = ex.call(d);
+          if (p && p.catch) p.catch(function () {});
+        } catch (e) {}
+      }
+    }
+    syncFullscreenLayout();
+  }
+
+  // 隐藏/显示面板要等下一帧才反映到 getBoundingClientRect，所以延后一帧再重排
+  function syncFullscreenLayout() {
+    requestAnimationFrame(relayout);
+  }
+
+  // 用户按 Esc（或浏览器自己退出全屏）时，把页面状态同步回来
+  function bindFullscreenSync() {
+    ['fullscreenchange', 'webkitfullscreenchange', 'MSFullscreenChange'].forEach(function (ev) {
+      document.addEventListener(ev, function () {
+        var on = !!(document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement);
+        // 只在「浏览器确实已经退出全屏」时收掉 CSS 全屏，
+        // 否则请求还没返回就会被这个事件误清掉。
+        if (!on && S.fullscreen) {
+          S.fullscreen = false;
+          appEl.classList.remove('fs');
+          syncFullscreenLayout();
+        }
+      });
+    });
   }
 
   function toggleWire(on) {
@@ -1944,6 +1787,8 @@
     initPixi();
     bindStagePanZoom();
     bindUI();
+    bindFullscreenSync();
+    setupRepoLink();
 
     var st = loadState();
     if (st && st.dark) {
@@ -1956,12 +1801,6 @@
       els.speed.value = String(Math.round(st.speed * 100));
       els.speedVal.textContent = S.speed.toFixed(2) + '×';
     }
-    S.autoNext = !!(st && st.autoNext);
-    els.autoNext.checked = S.autoNext;
-    S.autoPlayAll = !!(st && st.autoPlayAll);
-    els.playAll.checked = S.autoPlayAll;
-    if (S.autoPlayAll) els.playAllBar.classList.add('on');
-    applyHideMotions(!!(st && st.hideMotions));
     S.collapsed = (st && st.collapsed && typeof st.collapsed === 'object') ? st.collapsed : {};
 
     showOverlay('正在扫描模型…', '', false, true);
@@ -2005,8 +1844,7 @@
           playMotion: playMotion,
           userPlay: userPlay,
           togglePlay: togglePlay,
-          startPlayAll: startPlayAll,
-          stopPlayAll: stopPlayAll,
+          toggleFullscreen: toggleFullscreen,
           switchModel: function (key) {
             for (var i = 0; i < S.models.length; i++) {
               if (S.models[i].key === key) return switchModel(S.models[i]);
@@ -2064,10 +1902,9 @@
               motions: S.motions.length,
               current: S.current,
               playing: S.playing,
-              manual: S.manual,
-              autoNext: S.autoNext,
               autoPlayAll: S.autoPlayAll,
-              hideMotions: S.hideMotions,
+              fullscreen: S.fullscreen,
+              startRecoveryCount: startRecoveryCount,
               speed: S.speed,
               clock: S.motionClock,
               t: currentTime(),
