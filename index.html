@@ -116,6 +116,29 @@
   /* 模型列表独占整个侧栏（页面已无动作列表） */
   .model-list{ overflow-y:auto; padding:8px; flex:1 1 auto; }
 
+  /* 侧栏底部的「本地预览」入口 —— 界面左下角。
+     它是 .sidebar 的直接子元素（第 4 个），不放进 .model-list 里，
+     否则模型一多它就会被列表带着滚走，不再「钉在左下角」。
+     ⚠️ 三个专项脚本都断言了 .sidebar 的直接子元素个数，加删子元素要同步改。 */
+  .side-foot{
+    flex:0 0 auto; padding:10px 12px;
+    padding-bottom:max(10px, env(safe-area-inset-bottom));
+    border-top:1px solid var(--line);
+  }
+  .btn-local{
+    width:100%; display:flex; align-items:center; justify-content:center; gap:7px;
+    padding:10px 12px; border-radius:10px; cursor:pointer;
+    border:1px dashed var(--line-strong); background:var(--panel);
+    color:var(--text-dim); font-size:12.5px; font-weight:600;
+    transition:.16s;
+  }
+  .btn-local:hover{
+    border-style:solid; border-color:var(--accent);
+    color:var(--accent); background:var(--accent-soft);
+  }
+  .btn-local:disabled{ opacity:.6; cursor:default; }
+  .btn-local svg{ flex:0 0 auto; }
+
   .model-item{
     display:flex; align-items:center; gap:10px;
     padding:9px 10px; border-radius:10px; cursor:pointer;
@@ -307,6 +330,158 @@
     border-top-color:var(--accent); border-radius:50%; animation:spin .7s linear infinite;
     vertical-align:-1px; margin-right:6px;
   }
+
+  /* ============ 本地预览对话框 ============
+     和提示条一样挂在 .stage 里而不是 body 上 —— 全屏时舞台才是整屏，挂外面会看不见。
+     z-index 8：压在加载遮罩（5）之上、提示条（9）之下，出错时提示条还能盖在它上面。 */
+  .modal-wrap{
+    position:absolute; inset:0; z-index:8;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+    /* .stage 是 touch-action:none（拖动模型要独占手势），这里必须放开，
+       否则手机端要求清单滚不动 */
+    touch-action:auto;
+  }
+  .modal-wrap[hidden]{ display:none; }
+  .modal-mask{
+    position:absolute; inset:0; background:rgba(20,26,35,.42);
+    animation:fadeIn .16s ease-out;
+  }
+  @keyframes fadeIn{ from{ opacity:0; } to{ opacity:1; } }
+  .modal{
+    position:relative; width:min(100%, 520px); max-height:100%;
+    display:flex; flex-direction:column;
+    background:var(--panel); border:1px solid var(--line-strong); border-radius:14px;
+    box-shadow:var(--shadow-md); overflow:hidden;
+    -webkit-user-select:text; user-select:text;
+    animation:modalIn .18s cubic-bezier(.2,.8,.3,1);
+  }
+  @keyframes modalIn{ from{ opacity:0; transform:translateY(10px) scale(.985); } to{ opacity:1; transform:none; } }
+  .modal-head{
+    flex:0 0 auto; display:flex; align-items:center; gap:10px;
+    padding:13px 14px 11px; border-bottom:1px solid var(--line);
+  }
+  .modal-title{ flex:1 1 auto; font-size:14px; font-weight:700; }
+  .modal-x{
+    flex:0 0 26px; width:26px; height:26px; border-radius:7px; cursor:pointer;
+    border:1px solid transparent; background:transparent; color:var(--text-faint);
+    font-size:17px; line-height:1; padding:0;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .modal-x:hover{ background:var(--panel-2); color:var(--text); }
+  .modal-body{
+    flex:1 1 auto; min-height:0; overflow-y:auto;
+    padding:14px; display:flex; flex-direction:column; gap:12px;
+    touch-action:pan-y;
+  }
+
+  /* 拖拽 / 点击选择的落点 */
+  .drop{
+    flex:0 0 auto; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:5px; padding:20px 16px; border-radius:12px; cursor:pointer;
+    border:2px dashed var(--line-strong); background:var(--panel-2);
+    text-align:center; transition:.16s;
+  }
+  .drop:hover{ border-color:var(--accent); }
+  .drop:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  /* 文件拖到对话框上时高亮（.over 由 #localModal 的 dragover 统一加） */
+  .drop.over{ border-style:solid; border-color:var(--accent); background:var(--accent-soft); }
+  .drop .di{ color:var(--text-faint); }
+  .drop:hover .di, .drop.over .di{ color:var(--accent); }
+  .drop .dm{ font-size:13px; font-weight:600; }
+  .drop .ds{ font-size:11.5px; color:var(--text-faint); }
+  .drop .ds b{ color:var(--accent); font-weight:600; }
+
+  /* 处理进度（解压 / 校验）就写在对话框里，不再靠舞台遮罩 —— 遮罩在对话框下面，看不见 */
+  .modal-status{
+    flex:0 0 auto; display:flex; align-items:center; gap:8px;
+    padding:9px 11px; border-radius:9px; font-size:12px; color:var(--text-dim);
+    background:var(--panel-2); border:1px solid var(--line);
+  }
+  .modal-status[hidden]{ display:none; }
+
+  /* 上传要求 */
+  .req-t{
+    font-size:11px; font-weight:700; letter-spacing:.7px; text-transform:uppercase;
+    color:var(--text-faint); margin-bottom:7px;
+  }
+  .req-list{ margin:0; padding-left:16px; display:flex; flex-direction:column; gap:5px; }
+  .req-list li{ font-size:11.5px; line-height:1.65; color:var(--text-dim); }
+  .req-list li b{ color:var(--text); font-weight:600; }
+  .req-list code{
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11px;
+    background:var(--panel-2); border:1px solid var(--line); border-radius:4px;
+    padding:0 4px; color:var(--accent);
+  }
+
+  /* 校验失败的原因：直接写在对话框里，对话框不关，用户能立刻换一个文件再试 */
+  .modal-err{
+    flex:0 0 auto; padding:9px 11px; border-radius:9px;
+    font-size:11.5px; line-height:1.65; white-space:pre-line; word-break:break-word;
+    color:#a13b38; background:#fdf1f1; border:1px solid #f3d2d2; border-left:3px solid var(--danger);
+  }
+  .modal-err[hidden]{ display:none; }
+
+  /* ============ 提示条（toast） ============
+     挂在 .stage 里而不是 body 上，好处有三：
+       · 位置天然跟着舞台走，不用去算顶栏 / 控制条的高度；
+       · 全屏时舞台就是整屏，提示照样看得见；
+       · z-index 比加载遮罩（5）高，加载失败时也能把原因弹出来。 */
+  .toast-host{
+    position:absolute; left:50%; transform:translateX(-50%); bottom:42px;
+    z-index:9; width:min(92%, 440px);
+    display:flex; flex-direction:column; gap:8px;
+    pointer-events:none;      /* 空白处不挡拖动，卡片本身单独放行 */
+  }
+  .toast{
+    pointer-events:auto;
+    display:flex; align-items:flex-start; gap:9px;
+    /* 实底而不是半透明：舞台有浅色 / 深色 / 纯黑三档，只有实底才能保证哪一档上都看得清 */
+    background:var(--panel); border:1px solid var(--line-strong);
+    border-left:3px solid var(--accent);
+    border-radius:10px; padding:10px 11px;
+    box-shadow:var(--shadow-md);
+    animation:toastIn .2s ease-out;
+  }
+  .toast.ok{ border-left-color:var(--accent-2); }
+  .toast.warn{ border-left-color:#d99413; }
+  .toast.error{ border-left-color:var(--danger); }
+  .toast.out{ animation:toastOut .18s ease-in forwards; }
+  .toast .ti{
+    flex:0 0 17px; width:17px; height:17px; border-radius:50%; margin-top:1px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:11px; font-weight:800; color:#fff; background:var(--accent);
+  }
+  .toast.ok .ti{ background:var(--accent-2); }
+  .toast.warn .ti{ background:#d99413; }
+  .toast.error .ti{ background:var(--danger); }
+  .toast .tb{ min-width:0; flex:1 1 auto; }
+  .toast .tm{ font-size:12.5px; font-weight:650; line-height:1.5; }
+  .toast .td{
+    font-size:11.5px; color:var(--text-dim); line-height:1.65; margin-top:3px;
+    word-break:break-word; white-space:pre-line;
+  }
+  .toast .tx{
+    flex:0 0 auto; border:0; background:transparent; cursor:pointer;
+    color:var(--text-faint); font-size:15px; line-height:1; padding:1px 2px;
+  }
+  .toast .tx:hover{ color:var(--text); }
+  @keyframes toastIn{ from{ opacity:0; transform:translateY(10px); } to{ opacity:1; transform:none; } }
+  @keyframes toastOut{ to{ opacity:0; transform:translateY(8px); } }
+
+  /* 本地导入的模型在列表里多一个「移除」按钮 */
+  .model-item .mi-rm{
+    margin-left:auto; flex:0 0 auto; width:22px; height:22px; border-radius:6px;
+    border:1px solid transparent; background:transparent; color:var(--text-faint);
+    cursor:pointer; display:flex; align-items:center; justify-content:center;
+    opacity:0; transition:opacity .15s, color .15s, border-color .15s;
+  }
+  .model-item:hover .mi-rm, .model-item.on .mi-rm{ opacity:1; }
+  .model-item .mi-rm:hover{ border-color:var(--danger); color:var(--danger); background:#fdf1f1; }
+  /* 触屏没有 hover，按钮必须一直可见 */
+  @media (pointer:coarse){
+    .model-item .mi-rm{ opacity:1; width:26px; height:26px; }
+  }
+
   /* ============ 全屏：整个屏幕只有模型 ============ */
   /* .app.fs 把顶栏 / 侧栏 / 底部控制条全部隐藏，舞台自动铺满视口 */
   .app.fs .topbar,
@@ -444,9 +619,21 @@
     .badge .b1{ font-size:12px; }
     .badge .b2{ font-size:10.5px; }
     .stage-hint{ font-size:11px; bottom:8px; padding:3px 10px; }
+    .toast-host{ bottom:38px; width:min(94%, 440px); }
+    .toast .tm{ font-size:12px; }
     .overlay{ padding:18px; }
     .overlay .msg{ font-size:12.5px; }
     .overlay .detail{ font-size:11px; }
+
+    /* 侧栏底部入口：安全区由 .sidebar 自己的 padding-bottom 处理，
+       这里再去 max(10px, env(...)) 会叠加成两倍留白 */
+    .side-foot{ padding-bottom:10px; }
+
+    /* 对话框：手机上把内边距收一点，让要求清单尽量少滚动 */
+    .modal-wrap{ padding:12px; }
+    .modal-body{ padding:12px; gap:10px; }
+    .drop{ padding:16px 12px; }
+    .req-list li{ font-size:11px; }
     .exit-fs{
       right:max(12px, env(safe-area-inset-right));
       top:max(12px, env(safe-area-inset-top));
@@ -475,6 +662,9 @@
     .search input{ padding-top:9px; padding-bottom:9px; }
     .seg button{ padding:7px 11px; }
     .tbtn{ padding:8px 13px; }
+    .btn-local{ padding:12px; }
+    .drop{ padding:24px 14px; }
+    .modal-x{ flex-basis:30px; width:30px; height:30px; }
   }
 </style>
 </head>
@@ -521,7 +711,8 @@
         <div class="t">模型列表</div>
         <div class="n" id="modelCount">加载中…</div>
         <!-- 手机端抽屉里的收起按钮。注意：它必须待在 .side-head 内部，
-             不能成为 .sidebar 的直接子元素 —— 回归断言侧栏只有 3 个直接子元素 -->
+             不能成为 .sidebar 的直接子元素 —— 回归断言侧栏只有 4 个直接子元素
+             （.side-head / .search / .model-list / .side-foot） -->
         <button class="nav-close" id="btnNavClose" type="button" title="收起列表" aria-label="收起模型列表">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor"
                stroke-width="1.8" stroke-linecap="round">
@@ -536,6 +727,21 @@
         <input type="text" id="modelSearch" placeholder="搜索模型…" autocomplete="off" />
       </div>
       <div class="model-list" id="modelList"></div>
+
+      <!-- 本地预览入口：钉在界面左下角（侧栏底部通栏）。
+           点它弹的是对话框而不是系统文件框 —— 对话框里既写明上传要求，
+           又能选择文件 / 直接拖文件进来。见「本地预览对话框」那一节 -->
+      <div class="side-foot">
+        <button class="btn-local" id="btnLocal" type="button"
+                title="本地预览：上传模型压缩包（.zip），在浏览器内解压校验后直接放进预览，不会上传到任何服务器">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+               stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M8 10.5V2.6"/><path d="M4.8 5.6 8 2.4l3.2 3.2"/>
+            <path d="M2.6 10.4v2.2a1 1 0 0 0 1 1h8.8a1 1 0 0 0 1-1v-2.2"/>
+          </svg>
+          <span id="btnLocalText">本地预览</span>
+        </button>
+      </div>
     </aside>
 
     <div class="stage-wrap">
@@ -557,6 +763,65 @@
           <div class="spinner" id="ovSpinner"></div>
           <div class="msg" id="ovMsg">正在初始化…</div>
           <div class="detail" id="ovDetail"></div>
+        </div>
+        <!-- 提示条容器。位置在舞台内部，见 CSS 里的 .toast-host -->
+        <div class="toast-host" id="toastHost" role="status" aria-live="polite"></div>
+
+        <!-- 本地预览对话框。放在 .stage 内部，理由和提示条一样：全屏时舞台就是整屏。
+             三种进来方式：点「本地预览」、点虚线框选文件、把文件拖到对话框上。
+             上传要求写在这里（不是弹个 toast 就完事），见 CSS 里的 .req-* -->
+        <div class="modal-wrap" id="localModal" hidden>
+          <div class="modal-mask" id="localMask"></div>
+          <div class="modal" role="dialog" aria-modal="true" aria-labelledby="localTitle">
+            <div class="modal-head">
+              <div class="modal-title" id="localTitle">本地预览 · 上传模型压缩包</div>
+              <button class="modal-x" id="btnLocalClose" type="button" aria-label="关闭对话框">×</button>
+            </div>
+            <div class="modal-body">
+              <!-- 落点。拖拽高亮用的是 .over，由 #localModal 的 dragover 统一加 -->
+              <div class="drop" id="localDrop" tabindex="0" role="button"
+                   aria-label="点击选择，或把模型压缩包拖到这里">
+                <svg class="di" width="26" height="26" viewBox="0 0 24 24" fill="none"
+                     stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 15.5V3.8"/><path d="M7.6 8.2 12 3.8l4.4 4.4"/>
+                  <path d="M3.8 15v3.4a1.6 1.6 0 0 0 1.6 1.6h13.2a1.6 1.6 0 0 0 1.6-1.6V15"/>
+                </svg>
+                <div class="dm">把模型压缩包拖到这里</div>
+                <div class="ds">或者 <b>点击选择文件</b> · 只收 <code>.zip</code> · 单个不超过 200 MB</div>
+              </div>
+              <input type="file" id="fileLocal" style="display:none"
+                     accept=".zip,application/zip,application/x-zip-compressed" />
+
+              <!-- 处理进度就写在对话框里，不用舞台遮罩（遮罩在对话框下面，看不见） -->
+              <div class="modal-status" id="localStatus" hidden>
+                <span class="loading-mini"></span><span id="localStatusText"></span>
+              </div>
+
+              <!-- 校验失败时把原因写在这里，对话框不关，可以立刻换一个文件再试 -->
+              <div class="modal-err" id="localErr" hidden></div>
+
+              <div class="req">
+                <div class="req-t">上传要求</div>
+                <ul class="req-list">
+                  <li><b>格式</b>：<code>.zip</code> 压缩包，STORE / DEFLATE 都可以。
+                      不支持 <code>.rar</code> / <code>.7z</code>、分卷压缩、带密码的包，以及 ZIP64。</li>
+                  <li><b>大小</b>：单个压缩包不超过 <b>200 MB</b>。</li>
+                  <li><b>模型版本</b>：Live2D Cubism <b>3.0 ~ 5.0</b>（moc3 版本号 1 ~ 5）。
+                      版本高于 5.0 的模型，页面自带的 Core 打不开。</li>
+                  <li><b>必需文件</b>：<code>xxx.model3.json</code>、<code>xxx.moc3</code>，
+                      以及 <code>model3.json</code> 里 <code>FileReferences.Textures</code>
+                      列出的<b>全部贴图</b>（png / jpg / webp 等可识别的图片格式）。
+                      少任何一个都会被拒绝。</li>
+                  <li><b>可选文件</b>：动作 motions / 物理 physics / 姿势 pose / 表情 expressions /
+                      语音 sounds —— 缺了会自动裁掉，仍然可以预览。</li>
+                  <li><b>打包建议</b>：把模型文件夹整个压进去（顶层带一个文件夹名），
+                      一个压缩包只放一个模型；目录层级随意，页面会自动找。</li>
+                  <li><b>隐私</b>：全程在本机浏览器里解压，<b>不会上传到任何服务器</b>。
+                      本地模型只存在于本次会话，刷新页面即消失。</li>
+                </ul>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -642,7 +907,18 @@
     stageHint:    document.getElementById('stageHint'),
     btnNav:       document.getElementById('btnNav'),
     btnNavClose:  document.getElementById('btnNavClose'),
-    navScrim:     document.getElementById('navScrim')
+    navScrim:     document.getElementById('navScrim'),
+    btnLocal:     document.getElementById('btnLocal'),
+    btnLocalText: document.getElementById('btnLocalText'),
+    fileLocal:    document.getElementById('fileLocal'),
+    localModal:   document.getElementById('localModal'),
+    localMask:    document.getElementById('localMask'),
+    localDrop:    document.getElementById('localDrop'),
+    localClose:   document.getElementById('btnLocalClose'),
+    localStatus:  document.getElementById('localStatus'),
+    localStatusText: document.getElementById('localStatusText'),
+    localErr:     document.getElementById('localErr'),
+    toastHost:    document.getElementById('toastHost')
   };
   var appEl = document.querySelector('.app');
 
@@ -686,7 +962,10 @@
     hiddenDrawables: [], // 当前模型要隐藏的网格名（同上）
     hiddenMapParts: null,// manifest.json 里的 hiddenParts 全表
     hiddenMapDrawables: null,
-    _hideCache: null     // 「名字 → 索引」缓存，载入新模型时必须清空
+    _hideCache: null,    // 「名字 → 索引」缓存，载入新模型时必须清空
+    uploading: false,    // 「本地预览」正在处理压缩包，防止连点
+    localOpen: false,    // 「本地预览」对话框是否打开（决定 Esc 先关对话框而不是退全屏）
+    _deadUrls: []        // 待释放的 object URL（模型卸载之后再 revoke，见 queueRevoke）
   };
 
   // ---------- 工具 ----------
@@ -965,7 +1244,8 @@
     el.className = 'model-item' + (active ? ' on' : '');
     var sub = showCrumb && m.group ? m.group : '';
     var meta = '';
-    if (m.motions) meta = m.motions + ' 个动作';
+    if (m._local) meta = '本地导入' + (m.motions ? ' · ' + m.motions + ' 个动作' : ' · 无动作');
+    else if (m.motions) meta = m.motions + ' 个动作';
     el.innerHTML =
       '<div class="dot"></div>' +
       '<div class="meta" style="min-width:0;flex:1 1 auto;">' +
@@ -976,6 +1256,25 @@
       '</div>';
     el.title = m.path + '/' + m.file;
     el.addEventListener('click', function () { switchModel(m); });
+
+    // 本地导入的模型只在这次会话里存在（文件在内存里，刷新就没了），
+    // 给它一个移除入口，免得列表越攒越长、blob URL 一直不释放。
+    if (m._local) {
+      var rm = document.createElement('button');
+      rm.className = 'mi-rm';
+      rm.type = 'button';
+      rm.title = '从列表移除（文件本来就在你本地，不会被删除）';
+      rm.setAttribute('aria-label', '移除本地模型 ' + m.name);
+      rm.innerHTML = '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" ' +
+                     'stroke="currentColor" stroke-width="2" stroke-linecap="round">' +
+                     '<path d="M4 4l8 8"/><path d="M12 4l-8 8"/></svg>';
+      rm.addEventListener('click', function (ev) {
+        ev.stopPropagation();       // 别顺手把模型也切过去
+        ev.preventDefault();
+        removeLocalModel(m.key);
+      });
+      el.appendChild(rm);
+    }
     return el;
   }
 
@@ -1032,19 +1331,32 @@
   }
 
   // ---------- 3. 载入模型 ----------
-  function parseMotions(mf) {
+  // 解析动作清单。
+  //
+  // mf  —— model3.json 的内容
+  // relOf —— 可选，把「动作对象的 File 值」还原成「原始相对路径」。
+  //          本地导入的模型在写进 model3.json 之前，所有 File 都被换成了 blob: URL
+  //          （blob URL 之间没法互相解析相对路径），而显示名和「是不是 idle」的判定
+  //          都得看原始文件名，所以这里要能反查回去。
+  //          远程模型不需要（relOf 缺省就是恒等函数）。
+  function parseMotions(mf, relOf) {
+    relOf = relOf || function (x) { return x; };
     var raw = (mf.FileReferences && mf.FileReferences.Motions) || {};
     var out = [];
     Object.keys(raw).forEach(function (group) {
       (raw[group] || []).forEach(function (item, idx) {
         var file = item.File;
         if (!file) return;
+        // file 用于 fetch、以及与 SDK 的 definitions[group][i].File 比对，必须是「真正要取的那个值」
+        // rel 只用于显示名和 idle 判定，始终是模型作者写的那个相对路径
+        var rel = String(relOf(file) || file).replace(/\\/g, '/');
         out.push({
           file: file,
-          base: file.split('/').pop(),
+          rel: rel,
+          base: rel.split('/').pop(),
           group: group,
           localIndex: idx,   // 该动作在所属分组内的下标，与 motionGroups 顺序一致
-          loop: group === 'Idle' || /(^|\/)idle\./i.test(file) || /\bidle\b/i.test(file),
+          loop: group === 'Idle' || /(^|\/)idle\./i.test(rel) || /\bidle\b/i.test(rel),
           duration: 0
         });
       });
@@ -1052,9 +1364,16 @@
     return out;
   }
 
+  // 相对路径 → 可直接 fetch 的绝对地址。
+  // 远程模型是 models/<path>/<file>；本地导入的模型 File 已经是 blob: URL，原样返回。
+  function absUrl(base, f) {
+    if (/^(blob:|data:|https?:)/i.test(f)) return f;
+    return base + f;
+  }
+
   function probeDurations(baseUrl) {
     return Promise.all(S.motions.map(function (mo) {
-      return fetch(baseUrl + '/' + mo.file, { cache: 'no-cache' })
+      return fetch(absUrl(baseUrl, mo.file), { cache: 'no-cache' })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (j) {
           var d = j && j.Meta && j.Meta.Duration;
@@ -1083,13 +1402,16 @@
     showOverlay('正在载入模型 ' + modelTitle(m) + ' …', '读取模型配置与动作数据', false, true);
 
     // 模型的完整目录：models/<path>
-    var baseUrl = 'models/' + (m.path ? m.path + '/' : '');
-    var manifestUrl = baseUrl + m.file;
+    // 本地导入的模型（m._local）所有文件都是内存里的 blob URL，
+    // model3.json 本身也是一个 blob URL，没有「目录」这个概念。
+    var local = m._local || null;
+    var baseUrl = local ? '' : ('models/' + (m.path ? m.path + '/' : ''));
+    var manifestUrl = local ? local.jsonUrl : (baseUrl + m.file);
     var t0 = Date.now();
 
     fetchJSON(manifestUrl).then(function (mf) {
       S.model = m;
-      S.motions = parseMotions(mf);
+      S.motions = parseMotions(mf, local ? function (u) { return local.relByUrl[u]; } : null);
       S.current = -1;
       els.badgeName.textContent = modelTitle(m);
       els.badgeMotion.textContent = '—';
@@ -1123,6 +1445,7 @@
         if (S.l2dModel) { S.app.stage.removeChild(S.l2dModel); S.l2dModel.destroy(); }
       } catch (e2) {}
       S.l2dModel = null;
+      flushRevokes();
       S.motions = [];
       S.current = -1;
       els.badge.style.display = 'none';
@@ -1173,6 +1496,8 @@
         try { S.app.stage.removeChild(S.l2dModel); S.l2dModel.destroy(); } catch (e) {}
         S.l2dModel = null;
       }
+      // 旧模型已经 destroy，之前排队的 blob URL 现在可以安全释放了
+      flushRevokes();
       return PIXI.live2d.Live2DModel.from(manifestUrl, {
         autoInteract: false,
         autoUpdate: true,
@@ -1419,7 +1744,12 @@
             failed.push(rel);   // 引用了但文件不存在 → 跳过，不阻断整体
           }).then(function () {
             done++;
-            if (els.btnDownload) els.btnDownload.textContent = '打包中 ' + done + '/' + rels.length;
+            // 只有「用户点了下载」时才改按钮文案。
+            // 不加这个判断的话，任何直接调 pack() 的地方（例如自动化验收）都会把
+            // 按钮永久留在「打包中 N/M」上 —— 恢复文案的逻辑在 downloadCurrentModel 里。
+            if (S.downloading && els.btnDownload) {
+              els.btnDownload.textContent = '打包中 ' + done + '/' + rels.length;
+            }
           });
         });
       }, Promise.resolve()).then(function () {
@@ -1431,6 +1761,14 @@
 
   function downloadCurrentModel() {
     if (!S.model || S.downloading) return;
+    // 本地导入的模型本来就是从用户上传的压缩包解出来的，再打包回去没有意义
+    if (S.model._local) {
+      toast('本地模型不需要打包下载', {
+        type: 'info',
+        detail: '它本来就是从你上传的压缩包里解出来的，原始 zip 还在你手上。'
+      });
+      return;
+    }
     S.downloading = true;
     var btn = els.btnDownload;
     if (btn) { btn.disabled = true; btn.textContent = '打包中…'; }
@@ -1459,8 +1797,781 @@
     });
   }
 
-  // ---------- 关闭 SDK 的自动 Idle 动作 ----------
+  // ---------- 本地模型：上传 zip → 浏览器内解压 → 校验 → 上架 ----------
   //
+  // 整条链路都在浏览器里跑，**不上传任何字节到服务器**（静态托管本来也没有后端）。
+  //
+  // 为什么不能把 zip 直接丢给 SDK：SDK 是按 URL 取文件的，而 zip 里的内容只在内存里，
+  // 没有 URL。所以流程是
+  //     解压 → 找到 model3.json → 校验 → 把 model3.json 里每一个文件引用都换成
+  //     该文件自己的 blob: URL → 再把这份改好的 model3.json 也做成 blob URL
+  //     → 交给 switchModel，走和远程模型完全一样的加载流程。
+  //
+  // ⚠️ 引用必须换成**绝对**的 blob: URL，不能保留相对路径：
+  //    blob URL 之间没法互相解析相对路径（blob:http://host/<uuid> 拼上 'zhala_2.moc3'
+  //    会得到 blob:http://host/zhala_2.moc3 —— 一个不存在的地址）。
+  //
+  // 「不符合要求就不展示」的判据（任一条不满足 → 整包拒绝，模型列表一个字都不改，
+  // 当前正在预览的模型也不动，只弹提示）：
+  //   · 不是合法 zip / 是 ZIP64 / 有密码 / 压缩方式不支持 / 文件头损坏
+  //   · 压缩包里没有 .model3.json
+  //   · model3.json 不是合法 JSON，或缺 FileReferences / FileReferences.Moc
+  //   · moc3 文件缺失，或文件头不是 MOC3，或版本高于页面内置 Core 支持的 5.0
+  //   · 没有贴图，或引用的贴图缺失 / 不是可识别的图片格式
+  // 只警告、仍然放行的：
+  //   · 部分动作缺失 → 裁掉那些动作
+  //   · 物理 / 姿势 / 表情 / 语音缺失 → 裁掉引用
+  //   · 一个动作都没有 → 能看静态姿势
+  //   · 压缩包里有多个模型 → 取路径最外层那个，并在提示里说明
+
+  var LOCAL_GROUP = '本地模型';
+  var MAX_ZIP_BYTES = 200 * 1048576;      // 单包上限，防止把标签页撑爆
+  var MAX_TOASTS = 4;
+
+  var MOC_VERSIONS = { 1: '3.0', 2: '3.3', 3: '4.0', 4: '4.2', 5: '5.0' };
+
+  function zipError(msg) { var e = new Error(msg); e.zipError = true; return e; }
+
+  // ---------- 提示条 ----------
+  var TOAST_ICON = { ok: '\u2713', warn: '!', error: '\u2715', info: 'i' };
+
+  function toastHost() {
+    if (els.toastHost) return els.toastHost;
+    var h = document.createElement('div');
+    h.className = 'toast-host';
+    els.toastHost = h;
+    document.body.appendChild(h);
+    return h;
+  }
+
+  function toast(msg, opts) {
+    opts = opts || {};
+    var type = opts.type || 'info';
+    var host = toastHost();
+    while (host.children.length >= MAX_TOASTS) host.removeChild(host.firstChild);
+
+    var el = document.createElement('div');
+    el.className = 'toast ' + type;
+    var icon = document.createElement('div');
+    icon.className = 'ti';
+    icon.textContent = TOAST_ICON[type] || 'i';
+    var body = document.createElement('div');
+    body.className = 'tb';
+    var tm = document.createElement('div');
+    tm.className = 'tm';
+    tm.textContent = String(msg);
+    body.appendChild(tm);
+    if (opts.detail) {
+      var td = document.createElement('div');
+      td.className = 'td';
+      td.textContent = String(opts.detail);   // CSS 里 white-space:pre-line，换行直接生效
+      body.appendChild(td);
+    }
+    var close = document.createElement('button');
+    close.className = 'tx';
+    close.type = 'button';
+    close.setAttribute('aria-label', '关闭提示');
+    close.textContent = '\u00d7';
+    el.appendChild(icon); el.appendChild(body); el.appendChild(close);
+
+    var done = false;
+    function dismiss() {
+      if (done) return;
+      done = true;
+      el.classList.add('out');
+      setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 220);
+    }
+    close.addEventListener('click', dismiss);
+    // 提示条在 .stage 内部，点它会冒泡到舞台的 pointerdown 上被当成「开始拖动模型」，
+    // 这里拦一下（顺便让整张卡片点哪儿都能关掉）
+    el.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+    el.addEventListener('click', dismiss);
+
+    host.appendChild(el);
+    // 错误多留一会儿，用户得看清原因
+    setTimeout(dismiss, opts.ms || (type === 'error' ? 9000 : 5200));
+    return el;
+  }
+
+  // ---------- object URL 生命周期 ----------
+  // 释放的时机很讲究：模型还挂在舞台上时 revoke 掉，贴图会直接变黑。
+  // 所以先排队，等旧模型真的 destroy() 之后再统一释放（见 loadIntoStage）。
+  function queueRevoke(urls) {
+    if (!urls || !urls.length) return;
+    S._deadUrls = (S._deadUrls || []).concat(urls);
+  }
+  function flushRevokes() {
+    var d = S._deadUrls;
+    if (!d || !d.length) return;
+    S._deadUrls = [];
+    for (var i = 0; i < d.length; i++) {
+      try { URL.revokeObjectURL(d[i]); } catch (e) {}
+    }
+  }
+
+  // ---------- zip 读取（纯前端，只依赖 DecompressionStream） ----------
+  //
+  // 支持的压缩方式：0 = STORE、8 = DEFLATE。
+  // DEFLATE 用浏览器原生的 DecompressionStream('deflate-raw')，不需要引任何库。
+  //
+  // ⚠️ 一切尺寸都以**中央目录**为准，不要读本地文件头里的尺寸：
+  //    很多打包工具（macOS 归档工具、部分 Java/Python 库）会置上「数据描述符」标志位，
+  //    此时本地头里的压缩后大小写的是 0，真实尺寸只存在于中央目录。
+  //    按本地头读会得到 0 字节的文件。
+
+  function findEocd(dv, u8) {
+    var min = Math.max(0, u8.length - 22 - 65535);   // 尾部注释最长 65535
+    for (var i = u8.length - 22; i >= min; i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) return i;
+    }
+    return -1;
+  }
+
+  // 文件名编码：置了 bit11 就是 UTF-8；否则先按 UTF-8 试，出现替换字符再退回 GBK
+  //（Windows 自带的「压缩到 zip」在老系统上写的是 GBK）
+  function decodeZipName(bytes, flags) {
+    if (flags & 0x0800) return new TextDecoder('utf-8').decode(bytes);
+    var s = new TextDecoder('utf-8').decode(bytes);
+    if (s.indexOf('\uFFFD') < 0) return s;
+    try { return new TextDecoder('gbk').decode(bytes); } catch (e) { return s; }
+  }
+
+  function inflateRaw(bytes) {
+    if (typeof DecompressionStream === 'undefined') {
+      return Promise.reject(zipError('当前浏览器不支持解压 deflate，请换用新版 Chrome / Edge / Firefox'));
+    }
+    var ds = new DecompressionStream('deflate-raw');
+    return new Response(new Blob([bytes]).stream().pipeThrough(ds))
+      .arrayBuffer()
+      .then(function (ab) { return new Uint8Array(ab); })
+      .catch(function () { throw zipError('压缩包已损坏（解压失败）'); });
+  }
+
+  // 解析 zip，resolve 出 [{ name, bytes }]，只含文件项（目录项跳过）
+  function readZip(arrayBuffer) {
+    var u8 = new Uint8Array(arrayBuffer);
+    var dv = new DataView(arrayBuffer);
+    if (u8.length < 22) throw zipError('文件太小，不是有效的 zip 压缩包');
+
+    var eocd = findEocd(dv, u8);
+    if (eocd < 0) throw zipError('这不是一个有效的 zip 压缩包（找不到中央目录）。请确认上传的是 .zip，而不是 .rar / .7z / 改过后缀名的文件。');
+
+    var count = dv.getUint16(eocd + 10, true);
+    var cdSize = dv.getUint32(eocd + 12, true);
+    var cdOff = dv.getUint32(eocd + 16, true);
+    if (count === 0xFFFF || cdOff === 0xFFFFFFFF || cdSize === 0xFFFFFFFF) {
+      throw zipError('不支持 ZIP64 格式的压缩包，请用普通 zip 重新压缩');
+    }
+    if (cdOff + cdSize > u8.length) throw zipError('压缩包已损坏（中央目录越界）');
+
+    var raws = [], off = cdOff;
+    for (var i = 0; i < count; i++) {
+      if (off + 46 > u8.length || dv.getUint32(off, true) !== 0x02014b50) {
+        throw zipError('压缩包已损坏（中央目录项不完整）');
+      }
+      var flags = dv.getUint16(off + 8, true);
+      var method = dv.getUint16(off + 10, true);
+      var csize = dv.getUint32(off + 20, true);
+      var nlen = dv.getUint16(off + 28, true);
+      var elen = dv.getUint16(off + 30, true);
+      var clen = dv.getUint16(off + 32, true);
+      var lho = dv.getUint32(off + 42, true);
+      var name = decodeZipName(u8.subarray(off + 46, off + 46 + nlen), flags);
+      off += 46 + nlen + elen + clen;
+
+      if (csize === 0xFFFFFFFF || lho === 0xFFFFFFFF) throw zipError('不支持 ZIP64 格式的压缩包');
+      if (name.charAt(name.length - 1) === '/') continue;      // 目录项
+      if (flags & 0x0001) throw zipError('压缩包里的「' + name + '」是加密的，请先解压再重新压缩');
+      raws.push({ name: name, method: method, csize: csize, lho: lho });
+    }
+    if (!raws.length) throw zipError('压缩包里没有任何文件');
+
+    // 串行解压：一个模型几十个文件，并发解压只会把内存峰值推高，也不好报进度
+    var entries = [], chain = Promise.resolve();
+    raws.forEach(function (r) {
+      chain = chain.then(function () {
+        if (dv.getUint32(r.lho, true) !== 0x04034b50) throw zipError('压缩包已损坏（本地文件头签名不对）');
+        var lnlen = dv.getUint16(r.lho + 26, true);
+        var lelen = dv.getUint16(r.lho + 28, true);
+        var start = r.lho + 30 + lnlen + lelen;
+        if (start + r.csize > u8.length) throw zipError('压缩包已损坏（文件数据越界）');
+        if (r.method === 0) {
+          // slice 而不是 subarray：subarray 是个视图，会让整个 zip 的 ArrayBuffer 一直活着
+          return { name: r.name, bytes: u8.slice(start, start + r.csize) };
+        }
+        if (r.method !== 8) throw zipError('压缩包里用了不支持的压缩方式（method ' + r.method + '），请用普通 zip 重新压缩');
+        return inflateRaw(u8.subarray(start, start + r.csize)).then(function (b) {
+          return { name: r.name, bytes: b };
+        });
+      }).then(function (e) { entries.push(e); });
+    });
+    return chain.then(function () { return entries; });
+  }
+
+  // ---------- 路径工具 ----------
+  // 统一成 'a/b/c' 形式：反斜杠转正斜杠、去掉 '.' 与空段、就地消化 '..'
+  function normPath(p) {
+    var parts = String(p).replace(/\\/g, '/').split('/'), out = [];
+    for (var i = 0; i < parts.length; i++) {
+      var s = parts[i];
+      if (!s || s === '.') continue;
+      if (s === '..') { out.pop(); continue; }
+      out.push(s);
+    }
+    return out.join('/');
+  }
+
+  // 压缩包里常见的垃圾文件：macOS 的 __MACOSX 与 ._ 资源叉、Windows 的 Thumbs.db 等
+  function isJunkPath(p) {
+    if (/(^|\/)(__MACOSX|\.DS_Store|Thumbs\.db|desktop\.ini)(\/|$)/i.test(p)) return true;
+    var base = p.split('/').pop();
+    return base.charAt(0) === '.';
+  }
+
+  function depthOf(p) { return p.split('/').length; }
+  // 文件名是否与所在目录同名（zhala_2/zhala_2.model3.json）—— 常见的导出约定
+  function sameAsDir(p) {
+    var parts = p.split('/');
+    if (parts.length < 2) return false;
+    var base = parts[parts.length - 1].replace(/\.model3\.json$/i, '');
+    return base.toLowerCase() === parts[parts.length - 2].toLowerCase();
+  }
+
+  function mimeOf(name) {
+    var ext = String(name).split('.').pop().toLowerCase();
+    return {
+      png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+      gif: 'image/gif', bmp: 'image/bmp',
+      mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', m4a: 'audio/mp4',
+      json: 'application/json', moc3: 'application/octet-stream'
+    }[ext] || 'application/octet-stream';
+  }
+
+  function readMocVersion(bytes) {
+    if (!bytes || bytes.length < 8) return null;
+    if (String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3]) !== 'MOC3') return null;
+    return bytes[4] | (bytes[5] << 8) | (bytes[6] << 16) | (bytes[7] << 24);
+  }
+
+  // 贴图是不是可识别的图片：只认 Cubism 能解码的那几种。
+  // 这条能挡住「压缩包截断 / 文件被替换成占位文本」这类坏包 ——
+  // 否则要等到 SDK 解码失败才报错，那时给不出有用的原因。
+  function looksLikeImage(b) {
+    if (!b || b.length < 12) return false;
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return true;   // PNG
+    if (b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) return true;                   // JPEG
+    if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return true;   // GIF
+    if (b[0] === 0x42 && b[1] === 0x4D) return true;                                     // BMP
+    if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+        b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return true; // WebP
+    return false;
+  }
+
+  function mb(n) { return (n / 1048576).toFixed(1) + ' MB'; }
+
+  // ---------- 挑出要用的那个 model3.json ----------
+  function pickModelJson(entries) {
+    var cands = entries.filter(function (e) {
+      return /\.model3\.json$/i.test(e.name) && !isJunkPath(e.name);
+    });
+    if (!cands.length) {
+      throw zipError('压缩包里没有 .model3.json —— 请确认压缩的是完整的模型文件夹' +
+                     '（里面要有 xxx.model3.json、xxx.moc3、贴图文件夹等）');
+    }
+    cands.sort(function (a, b) {
+      var da = depthOf(a.name), db = depthOf(b.name);
+      if (da !== db) return da - db;                       // 越靠外层越可能是模型本体
+      var ma = sameAsDir(a.name), mb2 = sameAsDir(b.name);
+      if (ma !== mb2) return ma ? -1 : 1;                  // 再优先「文件名与目录同名」的
+      return a.name < b.name ? -1 : 1;
+    });
+    return { chosen: cands[0], total: cands.length };
+  }
+
+  // ---------- 校验 + 改写引用，产出可直接上架的模型条目 ----------
+  function prepareLocalModel(entries, fileName) {
+    var picked = pickModelJson(entries);
+    var chosen = picked.chosen;
+    var rootDir = chosen.name.indexOf('/') < 0 ? '' : chosen.name.slice(0, chosen.name.lastIndexOf('/'));
+
+    var byPath = {}, lower = {};
+    entries.forEach(function (e) {
+      var n = normPath(e.name);
+      byPath[n] = e;
+      lower[n.toLowerCase()] = n;
+    });
+
+    // 把模型里的相对引用解析成压缩包内的真实路径。
+    // 只做「精确匹配」和「忽略大小写匹配」——不做「按文件名兜底」：
+    // 兜底可能匹配到同名的另一个文件（比如两张同名贴图），画面会错得很隐蔽，
+    // 不如直接报「缺少 xxx」让用户去检查压缩包。
+    function find(ref) {
+      if (!ref || typeof ref !== 'string') return null;
+      var r = normPath(ref);
+      if (!r) return null;
+      var full = rootDir ? normPath(rootDir + '/' + r) : r;
+      if (byPath[full]) return byPath[full];
+      var lo = lower[full.toLowerCase()];
+      return lo ? byPath[lo] : null;
+    }
+
+    var mf;
+    try {
+      mf = JSON.parse(new TextDecoder('utf-8').decode(chosen.bytes));
+    } catch (e) {
+      throw zipError('模型配置 ' + chosen.name + ' 不是合法的 JSON，压缩包可能已损坏');
+    }
+    var fr = mf && mf.FileReferences;
+    if (!fr || typeof fr !== 'object') throw zipError('模型配置里没有 FileReferences，这不是一个 Live2D 模型');
+    if (!fr.Moc) throw zipError('模型配置里没有指定 moc3 主体文件（FileReferences.Moc 缺失）');
+
+    // --- 硬性要求 1：moc3 主体 ---
+    var mocEntry = find(fr.Moc);
+    if (!mocEntry) throw zipError('压缩包里缺少模型主体文件 ' + fr.Moc + '，请确认压缩的是完整文件夹');
+    var mocVer = readMocVersion(mocEntry.bytes);
+    if (mocVer === null) {
+      throw zipError(mocEntry.name + ' 不是有效的 moc3 文件（文件头不是 MOC3），压缩包可能已损坏');
+    }
+    if (mocVer < 1) throw zipError(mocEntry.name + ' 的 moc3 版本号异常，压缩包可能已损坏');
+    if (mocVer > 5) {
+      throw zipError('这个模型用的是更新的 Cubism 版本（moc3 v' + mocVer + '），' +
+                     '页面内置的 Cubism Core 只支持到 5.0，无法预览');
+    }
+
+    // --- 硬性要求 2：贴图 ---
+    var texRefs = fr.Textures || [];
+    if (!texRefs.length) throw zipError('模型配置里没有贴图（FileReferences.Textures 为空），无法预览');
+    var missTex = [], badTex = [];
+    texRefs.forEach(function (t) {
+      var e = find(t);
+      if (!e) { missTex.push(String(t)); return; }
+      if (!looksLikeImage(e.bytes)) badTex.push(String(t));
+    });
+    if (missTex.length) {
+      throw zipError('压缩包里缺少 ' + missTex.length + ' 张贴图：\n· ' +
+                     missTex.slice(0, 5).join('\n· ') + (missTex.length > 5 ? '\n· …' : ''));
+    }
+    if (badTex.length) {
+      throw zipError('贴图不是可识别的图片格式（png / jpg / webp / gif / bmp）：\n· ' +
+                     badTex.slice(0, 5).join('\n· ') + (badTex.length > 5 ? '\n· …' : ''));
+    }
+
+    // --- 软性：其余引用缺失就裁掉，不阻断整体 ---
+    var urls = [], relByUrl = {}, dropped = [];
+    function toUrl(entry) {
+      var u = URL.createObjectURL(new Blob([entry.bytes], { type: mimeOf(entry.name) }));
+      urls.push(u);
+      return u;
+    }
+    function put(ref) {
+      var e = find(ref);
+      if (!e) { dropped.push(String(ref)); return null; }
+      var u = toUrl(e);
+      relByUrl[u] = normPath(ref);
+      return u;
+    }
+    function cloneWith(o, k, v) { var c = {}; for (var p in o) c[p] = o[p]; c[k] = v; return c; }
+
+    var out = {};
+    for (var key in mf) out[key] = mf[key];
+    var ofr = {};
+    for (var k2 in fr) ofr[k2] = fr[k2];
+    out.FileReferences = ofr;
+
+    ofr.Moc = put(fr.Moc);
+    ofr.Textures = texRefs.map(function (t) { return put(t); }).filter(Boolean);
+
+    ['Physics', 'Pose', 'UserData', 'DisplayInfo'].forEach(function (k) {
+      if (!fr[k]) return;
+      var u = put(fr[k]);
+      if (u) ofr[k] = u; else delete ofr[k];
+    });
+
+    if (fr.Expressions) {
+      var exps = [];
+      fr.Expressions.forEach(function (ex) {
+        if (!ex || !ex.File) return;
+        var u = put(ex.File);
+        if (u) exps.push(cloneWith(ex, 'File', u));
+      });
+      ofr.Expressions = exps;
+    }
+
+    var motionCount = 0;
+    if (fr.Motions) {
+      var mg = {};
+      Object.keys(fr.Motions).forEach(function (g) {
+        var list = [];
+        (fr.Motions[g] || []).forEach(function (mo) {
+          if (!mo || !mo.File) return;
+          var u = put(mo.File);
+          if (!u) return;
+          var cp = cloneWith(mo, 'File', u);
+          if (mo.Sound) {
+            var su = put(mo.Sound);
+            if (su) cp.Sound = su; else delete cp.Sound;
+          }
+          list.push(cp);
+        });
+        mg[g] = list;
+        motionCount += list.length;
+      });
+      ofr.Motions = mg;
+    }
+
+    var jsonUrl = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
+    urls.push(jsonUrl);
+
+    var modelName = chosen.name.split('/').pop().replace(/\.model3\.json$/i, '');
+    var zipBase = String(fileName || '本地模型').replace(/\.zip$/i, '');
+
+    return {
+      path: 'local/' + modelName,
+      file: chosen.name.split('/').pop(),
+      model: chosen.name.split('/').pop(),
+      name: modelName,
+      group: LOCAL_GROUP,
+      motions: motionCount,
+      textures: ofr.Textures.length,
+      mocVersion: MOC_VERSIONS[mocVer] || ('v' + mocVer),
+      key: 'local:' + modelName,
+      missing: [],
+      _local: {
+        jsonUrl: jsonUrl,
+        urls: urls,
+        relByUrl: relByUrl,
+        zip: zipBase,
+        dropped: dropped,
+        from: chosen.name,
+        candidates: picked.total
+      }
+    };
+  }
+
+  // ---------- 上架 / 移除 ----------
+  function releaseLocal(m) {
+    if (!m || !m._local) return;
+    m._local.urls = [];
+  }
+
+  function addLocalModel(entry) {
+    // 同名的本地模型只留一份：先把旧的撤下来（否则列表里会出现两个一模一样的）
+    for (var i = S.models.length - 1; i >= 0; i--) {
+      if (S.models[i].key === entry.key) {
+        queueRevoke(S.models[i]._local.urls);
+        releaseLocal(S.models[i]);
+        S.models.splice(i, 1);
+      }
+    }
+    S.models.push(entry);
+    renderModels();
+    return switchModel(entry);
+  }
+
+  function removeLocalModel(key) {
+    var idx = -1;
+    for (var i = 0; i < S.models.length; i++) {
+      if (S.models[i].key === key) { idx = i; break; }
+    }
+    if (idx < 0) return;
+    var m = S.models[idx];
+    if (!m._local) return;
+    var isCurrent = !!(S.model && S.model.key === key);
+    S.models.splice(idx, 1);
+    releaseLocal(m);
+
+    if (isCurrent) {
+      // 还挂在舞台上，blob URL 不能马上 revoke（贴图会变黑）。
+      // 排队，等 loadIntoStage 里 destroy 掉旧模型之后统一释放。
+      queueRevoke(m._local.urls);
+      var next = S.models[Math.min(idx, S.models.length - 1)] || S.models[0] || null;
+      renderModels();
+      if (next) switchModel(next);
+      else showOverlay('没有可预览的模型了', '', true, false);
+    } else {
+      queueRevoke(m._local.urls);
+      flushRevokes();
+      renderModels();
+    }
+    toast('已移除本地模型 ' + m.name, { type: 'info' });
+  }
+
+  // ---------- 「本地预览」对话框 ----------
+  //
+  // 三种进来方式，最后都汇到同一个 handleLocalZip()：
+  //   · 点左下角「本地预览」→ 打开对话框
+  //   · 对话框里点虚线框（或按回车 / 空格）→ 打开系统文件框
+  //   · 把文件拖到对话框任意位置 → 直接处理
+  //
+  // ⚠️ 对话框挂在 .stage 里而不是 body 上：全屏时舞台才是整屏，挂外面会看不见。
+  //    代价是它会吃到舞台的 pointerdown（被当成「开始拖动模型」），所以要拦冒泡。
+  // ⚠️ 拖拽监听挂在**整个对话框**上，不能只挂虚线框：用户按住文件往中间一放，
+  //    落点十有八九在下面的要求清单上，只挂虚线框就会「拖了没反应」。
+  function openLocalDialog() {
+    if (!els.localModal) return;
+    S.localOpen = true;
+    els.localModal.hidden = false;
+    setLocalError('');
+    setLocalStatus('');
+    // 打开就把焦点交给虚线框，键盘用户可以直接回车选文件
+    if (els.localDrop) { try { els.localDrop.focus(); } catch (e) {} }
+  }
+
+  function closeLocalDialog() {
+    if (!els.localModal) return;
+    S.localOpen = false;
+    els.localModal.hidden = true;
+    dropHighlight(false);
+    setLocalError('');
+    setLocalStatus('');
+    if (els.fileLocal) els.fileLocal.value = '';
+  }
+
+  function dropHighlight(on) {
+    if (els.localDrop) els.localDrop.classList.toggle('over', !!on);
+  }
+
+  function setLocalStatus(msg, detail) {
+    if (!els.localStatus) return;
+    var text = msg ? (detail ? msg + ' · ' + detail : msg) : '';
+    els.localStatus.hidden = !text;
+    if (els.localStatusText) els.localStatusText.textContent = text;
+  }
+
+  function setLocalError(msg) {
+    if (!els.localErr) return;
+    els.localErr.hidden = !msg;
+    els.localErr.textContent = msg ? String(msg) : '';
+  }
+
+  // 处理中的进度写两处：
+  //   · 对话框里的状态条 —— 对话框开着时用户看的是它；
+  //   · 舞台遮罩 —— 用户中途把对话框关了，也还能看到进度。
+  function localProgress(msg, detail) {
+    setLocalStatus(msg, detail);
+    showOverlay(msg, detail, false, true);
+  }
+
+  // 从 DataTransfer 里挑第一个文件（拖拽进来的文件从这儿拿）
+  function firstFile(dt) {
+    if (!dt) return null;
+    if (dt.files && dt.files.length) return dt.files[0];
+    if (dt.items && dt.items.length) {
+      for (var i = 0; i < dt.items.length; i++) {
+        var it = dt.items[i];
+        if (it && it.kind === 'file' && typeof it.getAsFile === 'function') {
+          var f = it.getAsFile();
+          if (f) return f;
+        }
+      }
+    }
+    return null;
+  }
+
+  // 早退的两种拒绝（后缀不对 / 体积超限）：对话框里写原因 + 弹提示条，其余状态一律不动
+  function rejectZip(msg, detail) {
+    setLocalError(msg + '\n' + detail);
+    toast(msg, { type: 'error', detail: detail });
+  }
+
+  function bindLocalDialog() {
+    if (!els.localModal) return;
+
+    // 点左下角入口 → 开对话框（注意：不是直接弹系统文件框）
+    if (els.btnLocal) els.btnLocal.addEventListener('click', openLocalDialog);
+    if (els.localClose) els.localClose.addEventListener('click', closeLocalDialog);
+    if (els.localMask) els.localMask.addEventListener('click', closeLocalDialog);
+
+    // 对话框在 .stage 里：pointerdown / wheel 都会冒泡去拖动、缩放模型，拦掉
+    els.localModal.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+    els.localModal.addEventListener('wheel', function (ev) { ev.stopPropagation(); }, { passive: true });
+
+    // 点虚线框 / 回车 / 空格 → 打开系统文件框
+    if (els.localDrop) {
+      els.localDrop.addEventListener('click', function () {
+        if (els.fileLocal) els.fileLocal.click();
+      });
+      els.localDrop.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          if (els.fileLocal) els.fileLocal.click();
+        }
+      });
+    }
+
+    if (els.fileLocal) {
+      els.fileLocal.addEventListener('change', function () {
+        var f = els.fileLocal.files && els.fileLocal.files[0];
+        // ⚠️ 必须先把 value 清掉，否则用户再选「同一个文件」时不会再触发 change。
+        //    清 value 不会让上面拿到的 File 对象失效，它仍然指向那份文件。
+        els.fileLocal.value = '';
+        handleLocalZip(f);
+      });
+    }
+
+    // ---- 拖拽 ----
+    // dragenter / dragleave 会随着经过子元素反复触发，用计数器判断「真的离开了」，
+    // 否则指针一滑过要求清单里的某一行，高亮就会闪一下。
+    var dragDepth = 0;
+    els.localModal.addEventListener('dragenter', function (ev) {
+      ev.preventDefault();
+      dragDepth++;
+      dropHighlight(true);
+    });
+    els.localModal.addEventListener('dragover', function (ev) {
+      // 不 preventDefault 的话浏览器不会派发 drop，而是直接打开这个 zip
+      ev.preventDefault();
+      if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy';
+      dropHighlight(true);
+    });
+    els.localModal.addEventListener('dragleave', function (ev) {
+      ev.preventDefault();
+      // relatedTarget 为 null = 指针离开了整个窗口。这种「拖出去就不回来了」的情况
+      // 浏览器不保证补发最后一次 dragleave，计数器会停在 >0 上，高亮就一直挂着。
+      // 所以这里直接把计数清零。
+      if (ev.relatedTarget) dragDepth = Math.max(0, dragDepth - 1);
+      else dragDepth = 0;
+      if (!dragDepth) dropHighlight(false);
+    });
+    els.localModal.addEventListener('drop', function (ev) {
+      ev.preventDefault();
+      dragDepth = 0;
+      dropHighlight(false);
+      handleLocalZip(firstFile(ev.dataTransfer));
+    });
+  }
+
+  // 拖到页面别处也不能让浏览器直接打开这个 zip —— 那会把整个预览页顶掉。
+  // 只拦「带文件」的拖拽，不影响页面里其它拖拽行为。
+  function guardFileDrop() {
+    function hasFiles(ev) {
+      var dt = ev.dataTransfer;
+      if (!dt || !dt.types) return false;
+      for (var i = 0; i < dt.types.length; i++) if (dt.types[i] === 'Files') return true;
+      return false;
+    }
+    window.addEventListener('dragover', function (ev) { if (hasFiles(ev)) ev.preventDefault(); });
+    window.addEventListener('drop', function (ev) { if (hasFiles(ev)) ev.preventDefault(); });
+  }
+
+  function setLocalBtnBusy(on) {
+    if (els.btnLocal) els.btnLocal.disabled = !!on;
+    // ⚠️ 只改文字节点，别写 els.btnLocal.textContent —— 那会把按钮里的图标一起抹掉
+    if (els.btnLocalText) els.btnLocalText.textContent = on ? '处理中…' : '本地预览';
+  }
+
+  // ---------- 入口：拿到用户选的文件（或拖进来的文件），走完整个流程 ----------
+  function handleLocalZip(file) {
+    if (!file) return;
+    if (S.uploading) { toast('正在处理上一个压缩包，请稍候', { type: 'info' }); return; }
+
+    setLocalError('');   // 上一次的失败原因先擦掉
+
+    if (!/\.zip$/i.test(file.name) &&
+        file.type !== 'application/zip' && file.type !== 'application/x-zip-compressed') {
+      rejectZip('只支持 .zip 压缩包',
+        '收到的是「' + file.name + '」。\n请把模型文件夹压缩成 zip 再上传' +
+        '（.rar / .7z 请先转成 zip）。');
+      return;
+    }
+    if (file.size > MAX_ZIP_BYTES) {
+      rejectZip('压缩包太大了',
+        '当前 ' + mb(file.size) + '，上限 ' + mb(MAX_ZIP_BYTES) + '。\n' +
+        '模型通常只有几十 MB，请确认压缩包里没有夹带别的东西。');
+      return;
+    }
+
+    S.uploading = true;
+    setLocalBtnBusy(true);
+    localProgress('正在读取压缩包 …', file.name + ' · ' + mb(file.size));
+
+    file.arrayBuffer()
+      .then(function (buf) {
+        localProgress('正在解压 ' + file.name + ' …', '');
+        return readZip(buf);
+      })
+      .then(function (entries) {
+        localProgress('正在校验模型 …', '共 ' + entries.length + ' 个文件');
+        return prepareLocalModel(entries, file.name);
+      })
+      .then(function (entry) {
+        S.uploading = false;
+        setLocalBtnBusy(false);
+        // 先关对话框再上架：加载遮罩的 z-index（5）在对话框（8）下面，
+        // 不关的话用户看不到「正在载入模型」的进度
+        closeLocalDialog();
+        // 不 hideOverlay()：紧接着的 switchModel 会自己接管遮罩，中间不留空档
+        addLocalModel(entry);
+
+        var notes = [];
+        if (!entry.motions) notes.push('这个模型没有动作数据，只能看静态姿势');
+        if (entry._local.dropped.length) {
+          notes.push('跳过 ' + entry._local.dropped.length + ' 个缺失文件：' +
+                     entry._local.dropped.slice(0, 3).join('、') +
+                     (entry._local.dropped.length > 3 ? ' 等' : ''));
+        }
+        if (entry._local.candidates > 1) {
+          notes.push('压缩包里有 ' + entry._local.candidates + ' 个模型，已载入最外层的 ' + entry._local.from);
+        }
+        toast('已载入本地模型 ' + entry.name, {
+          type: notes.length ? 'warn' : 'ok',
+          detail: (entry.motions ? entry.motions + ' 个动作 · ' : '') +
+                  entry.textures + ' 张贴图 · moc3 ' + entry.mocVersion +
+                  (notes.length ? '\n' + notes.join('\n') : '')
+        });
+      })
+      .catch(function (e) {
+        S.uploading = false;
+        setLocalBtnBusy(false);
+        // ⚠️ 校验不通过时**一个字都不改**：模型列表保持原样，当前预览的模型也继续播。
+        //    对话框**不关**，原因同时写进对话框和提示条 —— 用户可以立刻换一个文件再试。
+        //    只在有模型在播的时候收起遮罩，免得把「一个模型都没有」的初始错误页也盖掉。
+        if (S.model) hideOverlay();
+        var msg = String((e && e.message) || e);
+        setLocalStatus('');
+        setLocalError(msg);
+        toast('这个压缩包不能用', { type: 'error', detail: msg });
+      });
+  }
+
+  // ---------- 修 SDK 的一个 URL 解析缺陷：绝对地址（blob:）会被打坏 ----------
+  //
+  // ⚠️⚠️ 本地导入的模型**必须**走这个补丁，否则 moc3 / 贴图一律加载失败。
+  //
+  // Cubism4ModelSettings 继承自 ModelSettings，解析文件引用用的是打包进来的
+  // Node url 兼容层：
+  //     resolveURL(file) { return url.resolve(this.url, file) }
+  //
+  // 而 Node 的 url.resolve 是「按路径拼接」的旧式解析器：它把 blob: 当普通协议、
+  // 把后面的 http://… 当成路径名，序列化时把冒号吃掉：
+  //     url.resolve('blob:http://h/u1', 'blob:http://h/u2')
+  //       → 'blob:http//h/u2'          ← http 后面的冒号没了
+  // SDK 随即拿这个畸形地址去 XHR，控制台里是
+  //     [XHRLoader] Failed to load resource as arraybuffer (Status 0): blob:http//…
+  // 然后抛 "Texture loading error" / "Network error."，模型载入失败。
+  //
+  // 远程模型不受影响（http 地址走 url.resolve 本来就是对的），所以只在「已经是
+  // 绝对地址」时短路，其余仍旧交给原实现，行为与打补丁前完全一致。
+  var ABS_URL_RE = /^(blob:|data:|https?:|file:)/i;
+
+  function patchModelSettingsResolveURL() {
+    try {
+      var MS = PIXI.live2d.ModelSettings;
+      // Cubism4ModelSettings 没有自己实现 resolveURL，是继承来的（实测
+      // hasOwnProperty(prototype,'resolveURL') === false），所以改基类一处就够。
+      if (!MS || !MS.prototype || typeof MS.prototype.resolveURL !== 'function') return false;
+      if (MS.prototype.__l2dAbsUrlPatched) return true;
+      var orig = MS.prototype.resolveURL;
+      MS.prototype.resolveURL = function (file) {
+        if (typeof file === 'string' && ABS_URL_RE.test(file)) return file;
+        return orig.call(this, file);
+      };
+      MS.prototype.__l2dAbsUrlPatched = true;
+      return true;
+    } catch (e) { return false; }
+  }
+
+  // ---------- 关闭 SDK 的自动 Idle 动作 ----------  //
   // ⚠️⚠️ 这是「动作播到一半被顶掉 / 自动连播卡住」的根因，动这块代码前务必读完。
   //
   // assets/cubism4.min.js 里 MotionManager.update() 长这样：
@@ -2359,6 +3470,11 @@
 
     els.btnDownload.addEventListener('click', downloadCurrentModel);
 
+    // 本地预览：左下角入口 → 对话框（选文件 / 拖文件都在对话框里），
+    // 见「本地预览对话框」那一节
+    bindLocalDialog();
+    guardFileDrop();
+
     // 手机端抽屉：顶栏汉堡开关、面板里的 × 、遮罩、选中模型后自动收起
     if (els.btnNav) els.btnNav.addEventListener('click', function () { setNav(!S.navOpen); });
     if (els.btnNavClose) els.btnNavClose.addEventListener('click', function () { setNav(false); });
@@ -2376,6 +3492,9 @@
 
     window.addEventListener('keydown', function (e) {
       if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+      // 对话框开着时键盘只服务于对话框：Esc 关闭、回车 / 空格在虚线框上是「选文件」。
+      // 不拦住的话空格会顺手把动作播/停切换掉。
+      if (S.localOpen && e.key !== 'Escape') return;
       if (e.key === 'ArrowRight') userPlay(S.current + 1);
       else if (e.key === 'ArrowLeft') userPlay(S.current - 1);
       else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
@@ -2383,9 +3502,10 @@
       else if (e.key === 'f' || e.key === 'F') toggleFullscreen();
       else if (e.key === 't' || e.key === 'T') cycleStageTheme();
       // 浏览器原生全屏由 Esc 自己处理；这里兜底「请求被拒、只剩 CSS 全屏」的情况。
-      // 抽屉开着时 Esc 先收抽屉，不要顺手把全屏也退掉。
+      // 关闭的优先级：对话框 → 抽屉 → 全屏，一次 Esc 只做一件事。
       else if (e.key === 'Escape') {
-        if (S.navOpen) setNav(false);
+        if (S.localOpen) closeLocalDialog();
+        else if (S.navOpen) setNav(false);
         else if (S.fullscreen) exitFullscreen();
       }
     });
@@ -2505,6 +3625,8 @@
   function enterFullscreen() {
     S.fullscreen = true;
     setNav(false);            // 抽屉开着进全屏，退出时会莫名其妙地又冒出来
+    closeLocalDialog();       // 同理：全屏里侧栏（也就是「本地预览」入口）是藏起来的，
+                              // 对话框却挂在舞台上会一直留在屏幕中间
     appEl.classList.add('fs');
     var el = document.documentElement;
     var req = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
@@ -2619,6 +3741,8 @@
       return;
     }
     initPixi();
+    // 必须在任何模型载入之前打好：本地导入的模型全靠它（见函数上方说明）
+    patchModelSettingsResolveURL();
     bindStagePanZoom();
     bindUI();
     bindFullscreenSync();
@@ -2801,7 +3925,61 @@
           // 打包下载：回归测试要拿真实字节去校验 zip 结构（签名 / CRC / 中央目录），
           // 所以把纯打包函数暴露出来；download 那层会直接触发浏览器下载，不适合自动化。
           pack: function () { return packCurrentModel(); },
-          download: function () { downloadCurrentModel(); return 1; }
+          download: function () { downloadCurrentModel(); return 1; },
+          // 本地预览：自动化验收直接喂一个 File / Blob 进来（走的是和点按钮完全一样的流程）
+          importLocal: function (file) { handleLocalZip(file); return 1; },
+          // 对话框：验收要能开、能关、能查里面的文案与拖拽状态
+          openLocal: function () { openLocalDialog(); return 1; },
+          closeLocal: function () { closeLocalDialog(); return 1; },
+          localDialog: function () {
+            var m = els.localModal, d = els.localDrop, e2 = els.localErr;
+            return {
+              open: !!S.localOpen,
+              hidden: m ? !!m.hidden : null,
+              zIndex: m ? getComputedStyle(m).zIndex : null,
+              dropOver: d ? d.classList.contains('over') : null,
+              dropText: d ? d.textContent.replace(/\s+/g, ' ').trim() : '',
+              reqText: m ? (function () {
+                var u = m.querySelector('.req-list');
+                return u ? u.textContent.replace(/\s+/g, ' ').trim() : '';
+              })() : '',
+              reqItems: m ? m.querySelectorAll('.req-list li').length : 0,
+              errVisible: e2 ? !e2.hidden : null,
+              errText: e2 ? e2.textContent : '',
+              statusVisible: els.localStatus ? !els.localStatus.hidden : null,
+              statusText: els.localStatusText ? els.localStatusText.textContent : '',
+              // 入口按钮：位置、尺寸、文案、图标有没有被「处理中…」抹掉
+              btnText: els.btnLocalText ? els.btnLocalText.textContent : null,
+              btnIcon: !!(els.btnLocal && els.btnLocal.querySelector('svg'))
+            };
+          },
+          localInfo: function () {
+            var locals = S.models.filter(function (m) { return !!m._local; });
+            return {
+              count: locals.length,
+              keys: locals.map(function (m) { return m.key; }),
+              groups: locals.map(function (m) { return m.group; }),
+              total: S.models.length,
+              current: S.model ? S.model.key : null,
+              currentIsLocal: !!(S.model && S.model._local),
+              motions: S.motions.map(function (mo) { return mo.base; }),
+              uploading: S.uploading,
+              dialogOpen: !!S.localOpen,
+              pendingRevoke: (S._deadUrls || []).length,
+              absUrlPatched: !!(PIXI.live2d.ModelSettings &&
+                                PIXI.live2d.ModelSettings.prototype.__l2dAbsUrlPatched),
+              toastCount: els.toastHost ? els.toastHost.children.length : 0
+            };
+          },
+          // 提示条内容（验收要看「拒绝时到底提示了什么」）
+          toasts: function () {
+            if (!els.toastHost) return [];
+            return [].map.call(els.toastHost.children, function (el) {
+              var m = el.querySelector('.tm'), d = el.querySelector('.td');
+              return { type: el.className.replace('toast', '').replace('out', '').trim(),
+                       msg: m ? m.textContent : '', detail: d ? d.textContent : '' };
+            });
+          }
         };
       } catch (e) { /* 调试钩子失败不影响页面 */ }
     }).catch(function (err) {
