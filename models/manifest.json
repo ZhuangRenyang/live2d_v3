@@ -1,0 +1,32 @@
+{
+  "_note": [
+    "本文件只放「按模型覆盖」的少量配置，全部可选；不存在时页面按默认行为运行。",
+    "  alias           —— 模型 / 动作的友好名称映射",
+    "  motions         —— 动作友好名称映射",
+    "  hiddenParts     —— 按模型隐藏指定「部件」(part) 的名字列表",
+    "  hiddenDrawables —— 按模型隐藏指定「网格」(drawable) 的名字列表",
+    "键名用 models/ 下的相对路径，与 models/index.json 里的 path + '/' + file 一致。",
+    "",
+    "hiddenParts / hiddenDrawables 是干什么的：",
+    "  个别模型在导出时丢掉了部分网格的「不透明度参数绑定」。这些网格的静态不透明度",
+    "  是 1，而 moc3 里没有任何参数能改变它 —— 于是本该只在特定动作里出现的备用图层",
+    "  永久显示，看上去就是「多了一只手 / 一条手臂」。这属于模型自身的缺陷，任何渲染器",
+    "  都会把它画出来，只能在数据侧指定隐藏谁。放在这里的好处是：新增模型依旧不用改代码。",
+    "",
+    "  zhala_2 的情况（已逐个参数验证，非页面 bug）：",
+    "    PartHandLCongxia    10 张网格，armfore_l3 + hand_l_default_shouzhang_upper/lower 等",
+    "    PartHandLNakaiDuli   7 张网格，hand_l_nakai_xmz2/wmz2/zz2/sz2/dmz2 +",
+    "                                   hand_l_nie_shouzhang3 + armfore_l_peng3",
+    "    这 17 张正好是 moc3 里 drawable 顺序的最后 17 个（后期追加、绑定没带过来）。",
+    "    它们本该由 ParamHandLCongxiaAlpha / ParamHandLNakaiAlpha / ParamHandLNakai2Alpha 控制：",
+    "    这三个参数确实存在，也确实被 login.motion3.json 驱动（NakaiAlpha 在 login 前 10.2 秒为 1），",
+    "    但网格这一侧没有读它们。隐藏后 login 动作里那一下「手部动作」本来也已经是错位的静态图层，",
+    "    不会因为隐藏而失去可用的效果。"
+  ],
+  "hiddenParts": {
+    "Azue Lane(JP)/zhala_2/zhala_2.model3.json": [
+      "PartHandLCongxia",
+      "PartHandLNakaiDuli"
+    ]
+  }
+}
