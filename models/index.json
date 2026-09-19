@@ -1,24 +1,7 @@
 {
   "version": 1,
-  "count": 41,
+  "count": 40,
   "models": [
-    {
-      "path": "aimierbeierding_2",
-      "file": "aimierbeierding_2.model3.json",
-      "name": "aimierbeierding_2",
-      "group": "",
-      "parts": [
-        "aimierbeierding_2"
-      ],
-      "motions": 14,
-      "motionGroups": [
-        ""
-      ],
-      "textures": 2,
-      "mocVersion": "3.0",
-      "size": 3031904,
-      "missing": []
-    },
     {
       "path": "Azue Lane(JP)/aidang_2",
       "file": "aidang_2.model3.json",
