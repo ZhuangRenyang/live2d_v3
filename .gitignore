@@ -8,7 +8,10 @@ desktop.ini
 .tmp-diag
 .tmp-*
 
-# 本机回归 / 诊断脚本，不进 Pages
+# 本机回归 / 诊断脚本与临时产物，统一放 tmp/，不进 Pages
+tmp/
+
+# 兜底：万一又有人把脚本丢在根目录
 _regress.js
 _probe_*.js
 _diag_*.js
