@@ -182,7 +182,7 @@ jobs:
           TMP="${RUNNER_TEMP:-/tmp}"
 
           # tag 带上 run_id：同一秒内触发两次也不会撞
-          tag="models-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}"
+          tag="models-$(date -u +%Y%m%d)"
           new_count="${{ steps.scan.outputs.new }}"
 
           {
@@ -241,7 +241,7 @@ jobs:
           # ⚠️ date 的格式串必须整体加引号：里面有空格，不加会被拆成多个操作数，
           #    报 `extra operand` 并返回 1。而 `x=$(cmd)` 这种赋值语句的退出码就是
           #    cmd 的退出码 —— set -e 会当场终止脚本，下面整块 latest 都不会执行。
-          title_latest="最新模型包（$(date -u '+%Y-%m-%d %H:%M UTC')）"
+          title_latest="latest"
           if gh release view "$latest" >/dev/null 2>&1; then
             echo "更新 latest 指针 …"
             gh release upload "$latest" "${files[@]}" --clobber
@@ -275,7 +275,7 @@ jobs:
           # ⚠️ 这里的正则必须**只匹配时间戳 tag**（models-20260920-35520451206），
           #   不能写成 `grep '^models-'` —— 那会把固定指针 `models-latest` 也圈进来删掉。
           # gh release list 默认按创建时间倒序，前 keep 个就是最新的
-          mapfile -t tags < <(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -E '^models-[0-9]{8}-[0-9]+$' || true)
+          mapfile -t tags < <(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -E '^models-[0-9]{8}$' || true)
           if [ "${#tags[@]}" -le "$keep" ]; then
             echo "现有 ${#tags[@]} 个 Release，未超过保留数 $keep，不回收"
             exit 0
