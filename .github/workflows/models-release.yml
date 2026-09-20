@@ -94,8 +94,14 @@ jobs:
 
           # 归一化：去 CR、去空行；两侧都按 LC_ALL=C 排序，comm 才准
           # （Windows 上编辑过的文件会带 CRLF，不处理会永远比不上）
-          sed -e 's/\r$//' models.txt \
-            | grep -v '^[[:space:]]*$' \
+          #
+          # ⚠️ 过滤空行**不能**用 `grep -v '^[[:space:]]*$'`：
+          #    grep 在「一行都没匹配到」时退出码是 1 —— 包括**输入本身为空**的情况。
+          #    配上 pipefail，这个 1 会变成整条管道的失败，set -e 立刻终止 step。
+          #    首次运行时 models.txt 正是刚 `: >` 出来的空文件，必踩：
+          #    脚本会在打印完「创建基线」之后静悄悄挂掉，退出码 1，后面一句输出都没有。
+          #    sed 的 d 命令对空输入照样返回 0，用它。
+          sed -e 's/\r$//' -e '/^[[:space:]]*$/d' models.txt \
             | LC_ALL=C sort -u > "$TMP/recorded.txt"
 
           LC_ALL=C comm -13 "$TMP/recorded.txt" "$TMP/current.txt" > "$TMP/new.txt"
