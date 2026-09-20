@@ -201,7 +201,10 @@ jobs:
               echo '| `live2d_3_models_new.zip` | 仅本次新增的 '"${new_count}"' 个模型 |'
             fi
             echo
-            echo "> 两个包内部都带 `models/` 顶层目录，**解压到仓库根目录**即可。"
+            # ⚠️ 这一句必须用**单引号**：双引号里反引号是命令替换，
+            #    `models/` 会被 bash 拿去当命令执行（失败、返回空），
+            #    于是 Release 说明里那几个字就凭空消失了。
+            echo '> 两个包内部都带 `models/` 顶层目录，**解压到仓库根目录**即可。'
           } > "$TMP/notes.md"
 
           files=(live2d_3_models_all.zip)
@@ -213,6 +216,47 @@ jobs:
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "已发布 $tag"
+
+          # ── latest 指针：tag 固定 models-latest，资产每轮覆盖 ──
+          # 刻意**不删了重建**，改成就地 `upload --clobber`：删了重建有几秒空窗，
+          # 那期间下载链接是 404。代价是 models-latest 的 created_at 停在首次创建那天，
+          # GitHub 的「Latest」徽标会落在最新那个时间戳 release 上。
+          # 但两者是同一轮发布的同一批资产，所以下面两个地址指向同样的包：
+          #   /releases/download/models-latest/live2d_3_models_all.zip   ← tag 写死
+          #   /releases/latest/download/live2d_3_models_all.zip          ← GitHub 自动
+          latest="models-latest"
+          {
+            cat "$TMP/notes.md"
+            echo
+            echo "---"
+            echo '本 Release 是**最新快照**，每次发布都会被覆盖（tag 固定为 `models-latest`）。'
+            echo '固定下载地址：'
+            echo '```'
+            echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${latest}/live2d_3_models_all.zip"
+            echo '```'
+            echo
+            echo "本次来源：\`${tag}\`（run ${GITHUB_RUN_ID}）"
+          } > "$TMP/notes_latest.md"
+
+          # ⚠️ date 的格式串必须整体加引号：里面有空格，不加会被拆成多个操作数，
+          #    报 `extra operand` 并返回 1。而 `x=$(cmd)` 这种赋值语句的退出码就是
+          #    cmd 的退出码 —— set -e 会当场终止脚本，下面整块 latest 都不会执行。
+          title_latest="最新模型包（$(date -u '+%Y-%m-%d %H:%M UTC')）"
+          if gh release view "$latest" >/dev/null 2>&1; then
+            echo "更新 latest 指针 …"
+            gh release upload "$latest" "${files[@]}" --clobber
+            gh release edit "$latest" --title "$title_latest" --notes-file "$TMP/notes_latest.md"
+            # 这一轮没出增量包，就把 latest 上上一轮残留的 new.zip 摘掉，
+            # 免得它一直挂着一个早已不是「新增」的包
+            if [ "${{ steps.pack.outputs.has_new_zip }}" != "true" ]; then
+              gh release delete-asset "$latest" live2d_3_models_new.zip --yes 2>/dev/null || true
+            fi
+          else
+            echo "首次创建 latest 指针 …"
+            gh release create "$latest" --title "$title_latest" --notes-file "$TMP/notes_latest.md" "${files[@]}"
+          fi
+
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
 
       # ── 可选回收：默认 0 = 一个都不删 ──
       # 每份 all.zip ≈ models/ 的体积（43 个模型 ~211MB），一年 52 轮 ≈ 11GB，
@@ -228,8 +272,10 @@ jobs:
           case "$keep" in ''|*[!0-9]*) echo "prune_keep 不是数字（$keep），跳过"; exit 0 ;; esac
           [ "$keep" -gt 0 ] || exit 0
 
+          # ⚠️ 这里的正则必须**只匹配时间戳 tag**（models-20260920-35520451206），
+          #   不能写成 `grep '^models-'` —— 那会把固定指针 `models-latest` 也圈进来删掉。
           # gh release list 默认按创建时间倒序，前 keep 个就是最新的
-          mapfile -t tags < <(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep '^models-' || true)
+          mapfile -t tags < <(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -E '^models-[0-9]{8}-[0-9]+$' || true)
           if [ "${#tags[@]}" -le "$keep" ]; then
             echo "现有 ${#tags[@]} 个 Release，未超过保留数 $keep，不回收"
             exit 0
@@ -274,6 +320,12 @@ jobs:
               echo "- 已消失模型：${{ steps.scan.outputs.gone }} 个"
               if [ "${{ steps.pack.outputs.published }}" = "true" ]; then
                 echo "- 已发布 Release：${{ steps.release.outputs.tag }}"
+                echo
+                echo "两个固定下载地址（内容相同，都是本轮这批资产）："
+                echo '```'
+                echo "https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.latest }}/live2d_3_models_all.zip"
+                echo "https://github.com/${{ github.repository }}/releases/latest/download/live2d_3_models_all.zip"
+                echo '```'
               else
                 echo "- 无新增，未发布"
               fi
