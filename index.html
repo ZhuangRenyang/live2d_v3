@@ -1344,6 +1344,9 @@
       if (a === b) return 0;
       if (!a) return 1;
       if (!b) return -1;
+      // 本地模型固定排到最后
+      if (a === LOCAL_GROUP) return 1;
+      if (b === LOCAL_GROUP) return -1;
       return a.toLowerCase() < b.toLowerCase() ? -1 : 1;
     });
     var out = [];
