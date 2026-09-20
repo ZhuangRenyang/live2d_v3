@@ -5,9 +5,9 @@
     "Fps": 30.0,
     "Loop": false,
     "AreBeziersRestricted": true,
-    "CurveCount": 225,
-    "TotalSegmentCount": 1359,
-    "TotalPointCount": 3446,
+    "CurveCount": 230,
+    "TotalSegmentCount": 1363,
+    "TotalPointCount": 3455,
     "UserDataCount": 1,
     "TotalUserDataSize": 0
   },
@@ -9265,6 +9265,61 @@
         0,
         0,
         0,
+        6.433,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamBGAlpha",
+      "Segments": [
+        0,
+        1,
+        2,
+        6.433,
+        1
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamBeltYao",
+      "Segments": [
+        0,
+        0,
+        2,
+        6.433,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamTeethAlphaKF",
+      "Segments": [
+        0,
+        0,
+        2,
+        6.433,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamWuliChuliBase",
+      "Segments": [
+        0,
+        0,
+        2,
+        6.433,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamZBBYBKF",
+      "Segments": [
+        0,
+        0,
+        2,
         6.433,
         0
       ]

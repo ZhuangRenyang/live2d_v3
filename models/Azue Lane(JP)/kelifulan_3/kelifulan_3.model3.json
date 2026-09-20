@@ -6,6 +6,7 @@
       "textures/texture_00.png"
     ],
     "Physics": "kelifulan_3.physics3.json",
+    "Pose": "kelifulan_3.pose3.json",
     "Motions": {
       "": [
         {

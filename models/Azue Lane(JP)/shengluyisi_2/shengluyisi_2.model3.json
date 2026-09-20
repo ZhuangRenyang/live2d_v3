@@ -6,6 +6,7 @@
       "textures/texture_00.png",
       "textures/texture_01.png"
     ],
+    "Pose": "shengluyisi_2.pose3.json",
     "Physics": "shengluyisi_2.physics3.json",
     "Motions": {
       "": [

@@ -1,0 +1,63 @@
+{
+  "Type": "Live2D Pose",
+  "Groups": [
+    [
+      {
+        "Id": "Part18",
+        "Link": []
+      }
+    ],
+    [
+      {
+        "Id": "Part17",
+        "Link": []
+      },
+      {
+        "Id": "Part38",
+        "Link": []
+      }
+    ],
+    [
+      {
+        "Id": "Part27",
+        "Link": []
+      },
+      {
+        "Id": "Part28",
+        "Link": []
+      }
+    ],
+    [
+      {
+        "Id": "Part31",
+        "Link": []
+      },
+      {
+        "Id": "Part30",
+        "Link": []
+      },
+      {
+        "Id": "Part32",
+        "Link": []
+      }
+    ],
+    [
+      {
+        "Id": "Part20",
+        "Link": []
+      },
+      {
+        "Id": "Part22",
+        "Link": []
+      },
+      {
+        "Id": "Part24",
+        "Link": []
+      },
+      {
+        "Id": "Part35",
+        "Link": []
+      }
+    ]
+  ]
+}

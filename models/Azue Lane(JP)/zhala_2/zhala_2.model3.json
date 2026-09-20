@@ -7,6 +7,7 @@
     "Textures": [
       "textures/texture_00.png"
     ],
+    "Pose": "zhala_2.pose3.json",
     "Physics": "zhala_2.physics3.json",
     "Motions": {
       "Start": [

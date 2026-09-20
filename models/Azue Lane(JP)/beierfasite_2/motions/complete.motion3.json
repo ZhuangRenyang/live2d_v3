@@ -9151,68 +9151,6 @@
       ]
     },
     {
-      "Target": "PartOpacity",
-      "Id": "PartArmXingliL",
-      "Segments": [
-        0,
-        0,
-        2,
-        0.5,
-        1,
-        2,
-        10.5,
-        0,
-        2,
-        11.03,
-        0
-      ]
-    },
-    {
-      "Target": "PartOpacity",
-      "Id": "PartArmDefaultL",
-      "Segments": [
-        0,
-        1,
-        2,
-        0.5,
-        0,
-        2,
-        10.5,
-        1,
-        2,
-        11.03,
-        1
-      ]
-    },
-    {
-      "Target": "PartOpacity",
-      "Id": "PartArmXingliR",
-      "Segments": [
-        0,
-        0,
-        2,
-        0.5,
-        0,
-        2,
-        11.03,
-        0
-      ]
-    },
-    {
-      "Target": "PartOpacity",
-      "Id": "PartArmDefaultR",
-      "Segments": [
-        0,
-        1,
-        2,
-        0.5,
-        1,
-        2,
-        11.03,
-        1
-      ]
-    },
-    {
       "Target": "Parameter",
       "Id": "ParamHeadHorizontal",
       "Segments": [
@@ -9573,6 +9511,68 @@
         0,
         11.033,
         0
+      ]
+    },
+    {
+      "Target": "PartOpacity",
+      "Id": "PartArmXingliL",
+      "Segments": [
+        0,
+        0,
+        2,
+        0.5,
+        1,
+        2,
+        10.5,
+        0,
+        2,
+        11.03,
+        0
+      ]
+    },
+    {
+      "Target": "PartOpacity",
+      "Id": "PartArmDefaultL",
+      "Segments": [
+        0,
+        1,
+        2,
+        0.5,
+        0,
+        2,
+        10.5,
+        1,
+        2,
+        11.03,
+        1
+      ]
+    },
+    {
+      "Target": "PartOpacity",
+      "Id": "PartArmXingliR",
+      "Segments": [
+        0,
+        0,
+        2,
+        0.5,
+        0,
+        2,
+        11.03,
+        0
+      ]
+    },
+    {
+      "Target": "PartOpacity",
+      "Id": "PartArmDefaultR",
+      "Segments": [
+        0,
+        1,
+        2,
+        0.5,
+        1,
+        2,
+        11.03,
+        1
       ]
     },
     {

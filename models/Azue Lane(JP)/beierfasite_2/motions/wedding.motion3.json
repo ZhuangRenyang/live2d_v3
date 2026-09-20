@@ -17917,40 +17917,6 @@
       ]
     },
     {
-      "Target": "PartOpacity",
-      "Id": "PartArmXingliL",
-      "Segments": [
-        0,
-        0,
-        2,
-        0.5,
-        1,
-        2,
-        27.67,
-        0,
-        2,
-        28.83,
-        0
-      ]
-    },
-    {
-      "Target": "PartOpacity",
-      "Id": "PartArmDefaultL",
-      "Segments": [
-        0,
-        1,
-        2,
-        0.5,
-        0,
-        2,
-        27.67,
-        1,
-        2,
-        28.83,
-        1
-      ]
-    },
-    {
       "Target": "Parameter",
       "Id": "ParamHeadHorizontal",
       "Segments": [
@@ -18201,6 +18167,40 @@
         0,
         28.833,
         0
+      ]
+    },
+    {
+      "Target": "PartOpacity",
+      "Id": "PartArmXingliL",
+      "Segments": [
+        0,
+        0,
+        2,
+        0.5,
+        1,
+        2,
+        27.67,
+        0,
+        2,
+        28.83,
+        0
+      ]
+    },
+    {
+      "Target": "PartOpacity",
+      "Id": "PartArmDefaultL",
+      "Segments": [
+        0,
+        1,
+        2,
+        0.5,
+        0,
+        2,
+        27.67,
+        1,
+        2,
+        28.83,
+        1
       ]
     },
     {

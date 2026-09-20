@@ -4174,6 +4174,7 @@
     els.btnClearCache.addEventListener('click', clearOtherModelCache);
     els.btnFull.addEventListener('click', toggleFullscreen);
     els.btnExitFs.addEventListener('click', exitFullscreen);
+    els.btnExitFs.addEventListener('pointerdown', function (e) { e.stopPropagation(); });
 
     els.modelSearch.addEventListener('input', renderModels);
 

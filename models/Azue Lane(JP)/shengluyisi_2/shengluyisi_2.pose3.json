@@ -1,0 +1,20 @@
+{
+  "Type": "Live2D Pose",
+  "Groups": [
+    [
+      { "Id": "PartFace", "Link": [] }
+    ],
+    [
+      { "Id": "PartArmL1", "Link": [] },
+      { "Id": "PartArmL2", "Link": [] }
+    ],
+    [
+      { "Id": "PartArmR1", "Link": [] },
+      { "Id": "PartArmR2", "Link": [] }
+    ],
+    [
+      { "Id": "Mouth1", "Link": [] },
+      { "Id": "Mouth2", "Link": [] }
+    ]
+  ]
+}

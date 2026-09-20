@@ -7837,102 +7837,6 @@
       ]
     },
     {
-      "Target": "PartOpacity",
-      "Id": "PartMouthKey",
-      "Segments": [
-        0,
-        0,
-        2,
-        0.5,
-        1,
-        2,
-        6.67,
-        1
-      ]
-    },
-    {
-      "Target": "PartOpacity",
-      "Id": "PartMouth",
-      "Segments": [
-        0,
-        1,
-        2,
-        0.5,
-        0,
-        2,
-        6.67,
-        0
-      ]
-    },
-    {
-      "Target": "PartOpacity",
-      "Id": "PartArmXingliL",
-      "Segments": [
-        0,
-        0,
-        2,
-        0.5,
-        1,
-        2,
-        5.57,
-        0,
-        2,
-        6.67,
-        0
-      ]
-    },
-    {
-      "Target": "PartOpacity",
-      "Id": "PartArmDefaultL",
-      "Segments": [
-        0,
-        1,
-        2,
-        0.5,
-        0,
-        2,
-        5.57,
-        1,
-        2,
-        6.67,
-        1
-      ]
-    },
-    {
-      "Target": "PartOpacity",
-      "Id": "PartArmXingliR",
-      "Segments": [
-        0,
-        0,
-        2,
-        0.5,
-        1,
-        2,
-        5.57,
-        0,
-        2,
-        6.67,
-        0
-      ]
-    },
-    {
-      "Target": "PartOpacity",
-      "Id": "PartArmDefaultR",
-      "Segments": [
-        0,
-        1,
-        2,
-        0.5,
-        0,
-        2,
-        5.57,
-        1,
-        2,
-        6.67,
-        1
-      ]
-    },
-    {
       "Target": "Parameter",
       "Id": "ParamHeadHorizontal",
       "Segments": [
@@ -8106,6 +8010,102 @@
         0,
         6.67,
         0
+      ]
+    },
+    {
+      "Target": "PartOpacity",
+      "Id": "PartMouthKey",
+      "Segments": [
+        0,
+        0,
+        2,
+        0.5,
+        1,
+        2,
+        6.67,
+        1
+      ]
+    },
+    {
+      "Target": "PartOpacity",
+      "Id": "PartMouth",
+      "Segments": [
+        0,
+        1,
+        2,
+        0.5,
+        0,
+        2,
+        6.67,
+        0
+      ]
+    },
+    {
+      "Target": "PartOpacity",
+      "Id": "PartArmXingliL",
+      "Segments": [
+        0,
+        0,
+        2,
+        0.5,
+        1,
+        2,
+        5.57,
+        0,
+        2,
+        6.67,
+        0
+      ]
+    },
+    {
+      "Target": "PartOpacity",
+      "Id": "PartArmDefaultL",
+      "Segments": [
+        0,
+        1,
+        2,
+        0.5,
+        0,
+        2,
+        5.57,
+        1,
+        2,
+        6.67,
+        1
+      ]
+    },
+    {
+      "Target": "PartOpacity",
+      "Id": "PartArmXingliR",
+      "Segments": [
+        0,
+        0,
+        2,
+        0.5,
+        1,
+        2,
+        5.57,
+        0,
+        2,
+        6.67,
+        0
+      ]
+    },
+    {
+      "Target": "PartOpacity",
+      "Id": "PartArmDefaultR",
+      "Segments": [
+        0,
+        1,
+        2,
+        0.5,
+        0,
+        2,
+        5.57,
+        1,
+        2,
+        6.67,
+        1
       ]
     }
   ],

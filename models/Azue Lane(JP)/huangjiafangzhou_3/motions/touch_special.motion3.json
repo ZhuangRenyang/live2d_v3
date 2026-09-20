@@ -5,9 +5,9 @@
     "Fps": 30.0,
     "Loop": false,
     "AreBeziersRestricted": true,
-    "CurveCount": 197,
-    "TotalSegmentCount": 1583,
-    "TotalPointCount": 4268,
+    "CurveCount": 235,
+    "TotalSegmentCount": 1620,
+    "TotalPointCount": 4343,
     "UserDataCount": 1,
     "TotalUserDataSize": 0
   },
@@ -10910,6 +10910,424 @@
         0,
         0,
         0,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamArmForeR1Alpha",
+      "Segments": [
+        0,
+        1,
+        2,
+        9.5,
+        1
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamArmForeR2Alpha",
+      "Segments": [
+        0,
+        1,
+        2,
+        9.5,
+        1
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamArmUpperLayer",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamBGAlpha",
+      "Segments": [
+        0,
+        1,
+        2,
+        9.5,
+        1
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamBeltYao",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCamera3Alpha",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCamera3Angel",
+      "Segments": [
+        0,
+        4.6,
+        2,
+        9.5,
+        4.6
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCamera3AngelX",
+      "Segments": [
+        0,
+        -3.7,
+        2,
+        9.5,
+        -3.7
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCamera3PositionX",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCamera3PositionY",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCamera3Scale",
+      "Segments": [
+        0,
+        -30,
+        2,
+        9.5,
+        -30
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCamera3Y",
+      "Segments": [
+        0,
+        -30,
+        2,
+        9.5,
+        -30
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCameraLight",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamChixiangjiRAlpha",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCoatOverTurnL",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCoatOverTurnL1",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCoatOverTurnL2",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCoatOverTurnL3",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCoatOverTurnL4",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCoatOverTurnR",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCoatOverTurnR1",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCoatOverTurnR2",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCoatOverTurnR3",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamCoatOverTurnR4",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamDiyaoRAlpha",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamLBeltFT",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamRBeltFT",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamTeethAlphaKF",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamTrigerWalkLR",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamTrigerWalkUD",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamWuliChuliBase",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamXiachuiRAlpha",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamYELPositionX",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamYELPositiony",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "ParamZoul2lAlpha",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "Param_Angle_Rotation95",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "Param_Angle_Rotation96",
+      "Segments": [
+        0,
+        0,
+        2,
+        9.5,
+        0
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Id": "Param_Angle_Rotation97",
+      "Segments": [
+        0,
+        0,
+        2,
         9.5,
         0
       ]

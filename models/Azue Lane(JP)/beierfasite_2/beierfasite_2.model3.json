@@ -6,6 +6,7 @@
       "textures/texture_00.png"
     ],
     "Physics": "beierfasite_2.physics3.json",
+    "Pose": "beierfasite_2.pose3.json",
     "Motions": {
       "": [
         {

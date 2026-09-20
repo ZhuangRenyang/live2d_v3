@@ -6,6 +6,7 @@
       "textures/texture_00.png"
     ],
     "Physics": "aidang_2.physics3.json",
+    "Pose": "aidang_2.pose3.json",
     "Motions": {
       "": [
         {

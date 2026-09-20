@@ -1,0 +1,121 @@
+{
+  "Type": "Live2D Pose",
+  "Groups": [
+    [
+      { "Id": "PartArmL", "Link": [] }
+    ],
+    [
+      { "Id": "PartMouth", "Link": [] },
+      { "Id": "PartMouthKey", "Link": [] }
+    ],
+    [
+      { "Id": "PartArmLDefault", "Link": [] },
+      { "Id": "PartArmLMove", "Link": [] }
+    ],
+    [
+      { "Id": "PartHandLDefault", "Link": [] },
+      { "Id": "PartHandLMove", "Link": [] },
+      { "Id": "PartHandLCongxia", "Link": [] }
+    ],
+    [
+      { "Id": "PartArmRDefault", "Link": [] },
+      { "Id": "PartArmRMove", "Link": [] }
+    ],
+    [
+      { "Id": "PartHandRDefault", "Link": [] },
+      { "Id": "PartHandRMove", "Link": [] }
+    ],
+    [
+      { "Id": "PartHairFront", "Link": [] },
+      { "Id": "PartHairFrontShuai", "Link": [] }
+    ],
+    [
+      { "Id": "PartAhoge", "Link": [] },
+      { "Id": "PartAhogeShuai", "Link": [] }
+    ],
+    [
+      { "Id": "PartFace", "Link": [] }
+    ],
+    [
+      { "Id": "PartEye", "Link": [] }
+    ],
+    [
+      { "Id": "PartBrow", "Link": [] }
+    ],
+    [
+      { "Id": "PartHairSide", "Link": [] }
+    ],
+    [
+      { "Id": "PartHeadBack", "Link": [] }
+    ],
+    [
+      { "Id": "PartNeck", "Link": [] }
+    ],
+    [
+      { "Id": "PartChest", "Link": [] }
+    ],
+    [
+      { "Id": "PartBodyUpper", "Link": [] }
+    ],
+    [
+      { "Id": "PartBodyLower", "Link": [] }
+    ],
+    [
+      { "Id": "PartThighL", "Link": [] }
+    ],
+    [
+      { "Id": "PartThighR", "Link": [] }
+    ],
+    [
+      { "Id": "PartArmR", "Link": [] }
+    ],
+    [
+      { "Id": "PartHairFrontMain", "Link": [] }
+    ],
+    [
+      { "Id": "PartGrass", "Link": [] }
+    ],
+    [
+      { "Id": "PartGround", "Link": [] }
+    ],
+    [
+      { "Id": "PartLanGan", "Link": [] }
+    ],
+    [
+      { "Id": "PartWater", "Link": [] }
+    ],
+    [
+      { "Id": "PartSunLight", "Link": [] }
+    ],
+    [
+      { "Id": "PartMask", "Link": [] }
+    ],
+    [
+      { "Id": "PartHeadAcce", "Link": [] }
+    ],
+    [
+      { "Id": "PartLoginParts", "Link": [] }
+    ],
+    [
+      { "Id": "PartShuizhuDange", "Link": [] }
+    ],
+    [
+      { "Id": "PartShadowOnFace", "Link": [] }
+    ],
+    [
+      { "Id": "PartShaoziHan", "Link": [] }
+    ],
+    [
+      { "Id": "PartHandLNakaiDuli", "Link": [] }
+    ],
+    [
+      { "Id": "PartHandLNie", "Link": [] }
+    ],
+    [
+      { "Id": "PartHandLPeng", "Link": [] }
+    ],
+    [
+      { "Id": "PartHandRPeng", "Link": [] }
+    ]
+  ]
+}
