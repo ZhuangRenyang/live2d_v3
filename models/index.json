@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "count": 40,
+  "count": 41,
   "models": [
     {
       "path": "Azue Lane(JP)/aidang_2",
@@ -277,6 +277,25 @@
       "textures": 1,
       "mocVersion": "3.0",
       "size": 3795046,
+      "missing": []
+    },
+    {
+      "path": "Azue Lane(JP)/Haru",
+      "file": "Haru.model3.json",
+      "name": "Haru",
+      "group": "Azue Lane(JP)",
+      "parts": [
+        "Azue Lane(JP)",
+        "Haru"
+      ],
+      "motions": 31,
+      "motionGroups": [
+        "Idle",
+        "TapBody"
+      ],
+      "textures": 2,
+      "mocVersion": "3.0",
+      "size": 3100154,
       "missing": []
     },
     {

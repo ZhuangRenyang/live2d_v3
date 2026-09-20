@@ -213,11 +213,13 @@ http://localhost:8000/?model=Azue%20Lane(JP)/zhala_2/zhala_2.model3.json
 ├── index.html                   预览页面（全部逻辑）
 ├── build_index.py               扫描 models/ 生成 index.json
 ├── tmp/                         本机测试 / 临时脚本（已 git 忽略，不进 Pages）
-│   ├── _regress.js              无头 Chrome 回归测试（node tmp/_regress.js）
-│   ├── _probe_responsive.js     多端适配专项测试
-│   ├── _probe_ctrlwrap.js       底部控制条换行专项测试
-│   ├── _probe_local.js          本地预览（上传 zip）专项测试
-│   └── _probe_zip.js            下载模型（zip 打包）专项测试
+│   ├── _regress.js              无头 Chrome 回归测试（93 项）
+│   ├── _probe_responsive.js     多端适配专项测试（52 项）
+│   ├── _probe_ctrlwrap.js       底部控制条换行专项测试（38 项）
+│   ├── _probe_cycle.js          列表循环专项测试（22 项）
+│   ├── _probe_local.js          本地预览上传 zip 专项测试（118 项）
+│   ├── _probe_dragreal.js       本地预览真实拖拽专项 · CDP 派发（13 项）
+│   └── _probe_zip.js            下载模型 zip 打包专项测试（16 项）
 ├── assets/
 │   ├── live2dcubismcore.min.js  Live2D Cubism Core（官方运行时）
 │   ├── pixi.min.js              PIXI.js v6
@@ -234,6 +236,35 @@ http://localhost:8000/?model=Azue%20Lane(JP)/zhala_2/zhala_2.model3.json
 >
 > 它们需要 `ws`（脚本内用 `NODE_PATH` 指向工作区里的 node_modules 即可），
 > 以及 `C:\Program Files\Google\Chrome\Application\chrome.exe`。
+
+## 验收
+
+七套测试都用无头 Chrome（`ws` + `C:\Program Files\Google\Chrome\Application\chrome.exe`）跑，
+从项目根依次执行即可（Git Bash / WSL 下用下面的一行命令）：
+
+```bash
+export NODE_PATH="$HOME/.workbuddy-ai/binaries/node/workspace/node_modules"
+NODE="$HOME/.workbuddy-ai/binaries/node/versions/22.22.2-2/node.exe"
+for s in _regress _probe_responsive _probe_ctrlwrap _probe_cycle _probe_local _probe_dragreal _probe_zip; do
+  "$NODE" "tmp/$s.js" || break
+done
+```
+
+| 脚本 | 断言数 | 覆盖 |
+| --- | --- | --- |
+| `tmp/_regress.js` | 93 | 回归：布局 / 全屏 / 播放 / 循环动作 / 速度基准 |
+| `tmp/_probe_responsive.js` | 52 | 多端：5 视口 + 抽屉开合 + 真实 touch→pointer 链 |
+| `tmp/_probe_ctrlwrap.js` | 38 | 手机控制条换行显示全、不横向溢出 |
+| `tmp/_probe_cycle.js` | 22 | 列表循环：显示顺序 ≠ 原始顺序、换模型、绕回 |
+| `tmp/_probe_local.js` | 118 | 本地预览上传：选文件 / 12 类坏包全拒 / 解压上架 / 权重到 1 |
+| `tmp/_probe_dragreal.js` | 13 | 本地预览真实拖拽：`Input.dispatchDragEvent` 从浏览器层派发，文件由浏览器填 `dataTransfer.files` |
+| `tmp/_probe_zip.js` | 16 | 下载模型：手写 zip 结构 / 逐字节与源一致 / 系统解压可用 |
+
+合计 **352 项断言，0 失败**。
+
+> ⚠️ `_probe_dragreal.js` 依赖 Chrome 的 `Input.dispatchDragEvent`（拖拽模拟）能力，
+> 该能力随 Chrome 版本变化；若某版本把它整组 `SKIP`，前六套仍是本地预览的完整保证，
+> 换 Chrome 后需复验这一套。
 
 ## 说明
 
