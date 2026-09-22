@@ -56,6 +56,20 @@
       <div class="side-head">
         <div class="t">模型列表</div>
         <div class="n" id="modelCount">加载中…</div>
+        <!-- 侧栏头右侧的「+」：添加外部模型仓库的清单。
+             弹窗样式复用 .modal-wrap/.modal，与「本地预览」「贡献模型」保持一致。
+             紧贴 .nav-pin 左边 —— 桌面 + 手机端都显示（桌面 + 钉子，手机 + ×）。
+             ⚠️ 必须待在 .side-head 内部 —— 不能成为 .sidebar 的直接子元素，
+             否则会破坏「侧栏只有 4 个直接子元素」的回归断言（_regress / _probe_responsive）。 -->
+        <button class="src-btn" id="btnAddSrc" type="button"
+                title="从其它仓库添加模型：填入 models.json 所在的原始链接（raw 或 jsDelivr 均可）"
+                aria-label="添加外部模型源">
+          <!-- stroke-width 与同区域的 .nav-close 保持一致（1.8），别自己另起一套 -->
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+               stroke-width="1.8" stroke-linecap="round">
+            <path d="M8 3v10"/><path d="M3 8h10"/>
+          </svg>
+        </button>
         <!-- 侧栏头右侧的「固定」切换：钉上后鼠标移到左边框 / 离开侧栏都不会再自动展开折叠。
              只在桌面显示（手机端没有悬停可言，留着只会让人困惑）。
              必须待在 .side-head 内部 —— 不能成为 .sidebar 的直接子元素。 -->
@@ -274,6 +288,73 @@
               <div class="modal-actions">
                 <button class="btn-go" id="btnContribGo" type="button">开始上传</button>
                 <button class="btn-ghost" id="btnContribCancel" type="button">取消</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 「添加外部模型源」对话框。和本地预览 / 贡献模型一样挂在 .stage 内部
+             （全屏时舞台才是整屏）。复用同一套 .modal-wrap / .modal 样式。
+             用户填的可以是 raw 链接（.../refs/heads/master/models.json），
+             也可以是 jsDelivr 链接（.../gh/owner/repo@master/models.json）。
+             弹窗里实时显示「这条 URL 会被解析成哪条源、哪个仓库」。 -->
+        <div class="modal-wrap" id="srcModal" hidden>
+          <div class="modal-mask" id="srcMask"></div>
+          <div class="modal" role="dialog" aria-modal="true" aria-labelledby="srcTitle">
+            <div class="modal-head">
+              <div class="modal-title" id="srcTitle">添加外部模型仓库</div>
+              <button class="modal-x" id="btnSrcClose" type="button" aria-label="关闭对话框">×</button>
+            </div>
+            <div class="modal-body">
+              <div class="fld">
+                <div class="fld-t">清单 URL</div>
+                <input class="inp" id="srcUrl" type="text"
+                       placeholder="https://raw.githubusercontent.com/&lt;owner&gt;/&lt;repo&gt;/refs/heads/&lt;branch&gt;/models.json"
+                       autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+                <div class="hint">
+                  把别人仓库里 <code>models.json</code> 的原始链接粘过来。也可以粘 jsDelivr 链接 —— 见下方「镜像源」。
+                  模型文件实际位置在那个仓库的 <code>models/</code> 子目录下，格式与本页一致（model3.json + moc3 + 贴图）。
+                </div>
+              </div>
+
+              <div class="fld">
+                <div class="fld-t">镜像源</div>
+                <div class="src-seg" id="srcSeg" role="tablist">
+                  <button type="button" class="src-seg-opt" data-src="raw" role="tab">
+                    <i class="sw-dot" style="background:#1e2531;"></i><span>raw.githubusercontent.com</span>
+                  </button>
+                  <button type="button" class="src-seg-opt" data-src="cdn" role="tab">
+                    <i class="sw-dot" style="background:#f0a035;"></i><span>cdn.jsdelivr.net</span>
+                  </button>
+                </div>
+                <div class="hint">
+                  国内连 raw 慢就换 jsDelivr；jsDelivr 缓存 7 天、可能落后于仓库。URL 与源不匹配时会自动纠正并提示。
+                </div>
+              </div>
+
+              <div class="fld">
+                <div class="fld-t">解析预览</div>
+                <div class="src-preview" id="srcPreview">
+                  <div class="src-preview-line"><span class="k">仓库</span><span class="v" id="srcRepo">—</span></div>
+                  <div class="src-preview-line"><span class="k">分支</span><span class="v" id="srcBranch">—</span></div>
+                  <div class="src-preview-line"><span class="k">生效源</span><span class="v" id="srcEffective">—</span></div>
+                </div>
+              </div>
+
+              <!-- 处理进度 / 校验失败 —— 全部写在对话框里，对话框不关，方便换一个 URL 再试 -->
+              <div class="modal-status" id="srcStatus" hidden>
+                <span class="loading-mini"></span><span id="srcStatusText"></span>
+              </div>
+              <div class="modal-err" id="srcErr" hidden></div>
+
+              <div class="warn-box">
+                <div>外部模型走第三方仓库的可用性，<b>不在本页面可控范围</b>。仓库被删 / 改路径 / 限速时该组模型可能加载失败，
+                  移除后下次打开页面也不会再出现。</div>
+              </div>
+
+              <div class="modal-actions">
+                <button class="btn-go" id="btnSrcGo" type="button">读取并添加</button>
+                <button class="btn-ghost" id="btnSrcCancel" type="button">取消</button>
               </div>
             </div>
           </div>

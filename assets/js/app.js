@@ -5,6 +5,100 @@
   // 部署在 *.github.io 上时会自动按当前地址推断出真实仓库。
   var REPO_URL = 'https://github.com/weiraing/live2d_v3';
 
+  // ==================================================================
+  // 模型资源基址：页面与模型**分开存放**
+  //
+  // 页面发布到 gh-pages 分支（几百 KB），模型留在 master 分支（几百 MB）。
+  // 这样「新增一个模型 / 刷新一次 models.json」只需要动 master，gh-pages 那侧
+  // 是零改动 —— 不必重新生成、同步一份几百兆的站点产物（这正是以前慢的原因：
+  // 提交一个 20KB 的 models.json，GitHub 也得把整站 263MB 重新构建一遍）。
+  //
+  // 代价：页面在 gh-pages 上，模型在 master 上，必须走**绝对地址**（跨分支）。
+  // 本地开发（http://localhost）时模型就在旁边，继续走相对路径，免得白绕一圈网络。
+  //
+  // 两个源都配、可切换（rain 拍板）：
+  //   · raw   —— raw.githubusercontent.com，GitHub 官方，无需第三方；有限速，
+  //              国内直连可能不稳
+  //   · cdn   —— jsDelivr，全球 CDN、国内快、不限速；第三方服务，仓库更新后
+  //              有分钟级缓存延迟
+  // 主源失败自动切备源（见 fetchWithFallback）。用 ?src=raw|cdn 可强制指定，
+  // 方便出问题时排查到底是谁不灵。
+  //
+  // ⚠️ 改仓库名 / 用户名只改下面两行。
+  var REPO_OWNER = 'weiraing';
+  var REPO_NAME  = 'live2d_v3';
+
+  // 默认分支候选：GitHub 新建仓库默认 main，老仓库多是 master。**两个都试一遍**，
+  // 谁先取到 models.json 就用谁 —— 不必让人先自己去确认「这个仓库的分支叫啥」。
+  // 探明之后候选表会收窄成「同一分支的两个源」（见 pinBranch），所以
+  // 「主源半死时切备用源」的语义与以前只认 master 时完全一致。
+  var BRANCHES = ['master', 'main'];
+
+  function rawBaseOf(branch) {
+    return 'https://raw.githubusercontent.com/' + REPO_OWNER + '/' + REPO_NAME + '/' + branch + '/';
+  }
+  function cdnBaseOf(branch) {
+    return 'https://cdn.jsdelivr.net/gh/' + REPO_OWNER + '/' + REPO_NAME + '@' + branch + '/';
+  }
+
+  // 当前生效的模型基址（末尾一定带 '/'；本机相对模式时是空串）
+  var S_modelsBase = '';
+  // 外部基址的候选顺序（主 → 备）。探测阶段含两个分支，探明后只剩同一分支的两个源。
+  var S_baseCandidates = [];
+  // ?src= 强制指定的源（'' = 不强制）。收窄候选表时要照它来。
+  var S_forcedSrc = '';
+  // base 串 → 分支名。候选表都是这里拼的，留个映射比事后用正则从 URL 里抠分支可靠
+  // （分支名本身可能带 '.' / '-'，正则容易误伤）。
+  var S_branchByBase = {};
+
+  // 是不是「页面与模型分离」的部署形态：
+  //   · 本机 localhost / 127.0.0.1 / file:// → 否，走相对路径（模型就在页面旁边）
+  //   · 其余（GitHub Pages、自定义域名）→ 是，走 raw / jsDelivr 两个绝对基址
+  // 用「同源探测」比猜域名可靠：本地起 http.server 时，models/ 就在同目录下。
+  function isLocalHost() {
+    var h = location.hostname;
+    return !h || h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1';
+  }
+
+  // 解析出本次要用的基址候选表（主→备）。返回空数组 = 本机相对模式。
+  //
+  // ⚠️ 顺序是「源在外层、分支在内层」：命中 master 时零浪费（第一个就中）；而
+  //    raw 被限速时紧接着试的是 raw@main 而不是 jsDelivr，于是「探明分支」的那次
+  //    成功一定落在**第一个源**上，收窄后的候选表天然就是 [raw, cdn] 两项。
+  //    反过来排（分支在外层）会让 raw 限速时那唯一一次重试撞到 cdn@master 的 404。
+  function buildBaseCandidates() {
+    if (isLocalHost()) return [];
+    var q = '';
+    try { q = (new URLSearchParams(location.search).get('src') || '').toLowerCase(); } catch (e) {}
+    S_forcedSrc = (q === 'raw' || q === 'cdn') ? q : '';
+    var out = [];
+    function add(src) {
+      BRANCHES.forEach(function (b) {
+        var base = (src === 'cdn') ? cdnBaseOf(b) : rawBaseOf(b);
+        S_branchByBase[base] = b;
+        out.push(base);
+      });
+    }
+    if (S_forcedSrc) { add(S_forcedSrc); return out; }
+    add('raw'); add('cdn');       // 默认 raw 主、jsDelivr 备
+    return out;
+  }
+
+  // 把仓库内的相对路径（如 'models/Azue Lane(JP)/x/x.model3.json'）拼成可请求的 URL。
+  // 本机相对模式下原样返回，外部基址下补上绝对前缀。
+  // ⚠️ 逐段 encodeURIComponent：模型目录名里大量空格、括号、中文、日文
+  //    （'Azue Lane(JP)'、'Celeste - free'、'用户上传'），不编码的话
+  //    空格会被当成 URL 结束、括号会被当成语法，raw/CDN 直接 404。
+  // ⚠️ 但**不能**对整串 encodeURI —— 那会把 '/' 也编成 %2F，路径就断了。
+  function encodeRepoPath(rel) {
+    return String(rel == null ? '' : rel).split('/').map(encodeURIComponent).join('/');
+  }
+
+  function modelsUrl(rel) {
+    if (!S_modelsBase) return rel;
+    return S_modelsBase + encodeRepoPath(rel);
+  }
+
   var els = {
     modelList:    document.getElementById('modelList'),
     modelCount:   document.getElementById('modelCount'),
@@ -91,7 +185,24 @@
     rightNote:       document.getElementById('rightNote'),
     btnClearOverrides: document.getElementById('btnClearOverrides'),
     btnExportShot:   document.getElementById('btnExportShot'),
-    btnExportConfig: document.getElementById('btnExportConfig')
+    btnExportConfig: document.getElementById('btnExportConfig'),
+
+    // 添加外部模型源
+    btnAddSrc:       document.getElementById('btnAddSrc'),
+    srcModal:        document.getElementById('srcModal'),
+    srcMask:         document.getElementById('srcMask'),
+    srcClose:        document.getElementById('btnSrcClose'),
+    srcUrl:          document.getElementById('srcUrl'),
+    srcSeg:          document.getElementById('srcSeg'),
+    srcRepo:         document.getElementById('srcRepo'),
+    srcBranch:       document.getElementById('srcBranch'),
+    srcEffective:    document.getElementById('srcEffective'),
+    srcPreview:      document.getElementById('srcPreview'),
+    srcStatus:       document.getElementById('srcStatus'),
+    srcStatusText:   document.getElementById('srcStatusText'),
+    srcErr:          document.getElementById('srcErr'),
+    btnSrcGo:        document.getElementById('btnSrcGo'),
+    btnSrcCancel:    document.getElementById('btnSrcCancel')
   };
   var appEl = document.querySelector('.app');
 
@@ -135,6 +246,7 @@
     uploading: false,    // 「本地预览」正在处理压缩包，防止连点
     localOpen: false,    // 「本地预览」对话框是否打开（决定 Esc 先关对话框而不是退全屏）
     contribOpen: false,  // 「贡献模型」对话框是否打开（同样参与 Esc 优先级）
+    srcOpen: false,      // 「添加外部模型源」对话框是否打开（Esc 优先级中的一个）
     contributing: false, // 正在往仓库上传，防连点
     soundEnabled: true,  // 动作语音开关（默认开启）
     _baseUrl: '',        // 当前模型的目录基础路径，用于解析语音文件的绝对地址
@@ -164,6 +276,11 @@
   var CONTRIB_REPO_KEY  = 'l2d-contrib-repo';    // 手填的「用户名/仓库名」，下次打开时回填
   var CONTRIB_DIR = '用户上传';                   // models/<CONTRIB_DIR>/<模型名>/…
 
+  // 上次填过的外部源链接，下次打开对话框时预填。
+  // ⚠️ 与令牌同理，它**不进 S**（S 会被 saveState() 整个序列化）—— 但和令牌不同的是
+  //    这里没有任何凭据，只是一条公开的 models.json 地址，存下来没有风险。
+  var EXTSRC_KEY = 'l2d-extsrc';
+
   // ---------- 工具 ----------
   function prettyName(base) {
     var n = String(base).replace(/\.motion3\.json$/i, '').replace(/-/g, '_');
@@ -185,10 +302,25 @@
   }
   function hideOverlay() { els.overlay.classList.add('hide'); }
 
+  // 打开对话框之前把手机端的侧栏抽屉收起来。
+  //
+  // ⚠️ 为什么需要：三个对话框（本地预览 / 贡献模型 / 添加外部源）都挂在 .stage 里，
+  //    z-index 只有 8；而手机端的侧栏是 position:fixed 的抽屉，z-index 40 ——
+  //    抽屉不收，84vw 宽的对话框会被压在底下，用户只看得到右边一条缝，
+  //    想点对话框还会先点到抽屉遮罩上（于是变成「关抽屉」而不是操作对话框）。
+  //    桌面端侧栏在文档流里、不压舞台，对话框居中显示本来就没这问题，
+  //    所以只在手机断点下动。
+  function closeNavForDialog() {
+    if (mqMobile.matches && S.navOpen) setNav(false);
+  }
+
   function saveState() {
     try {
+      // ⚠️ 外部模型的 key 落盘没意义 —— 外部源不进 localStorage，
+      // 下次打开就找不到这个 key；不写出去反而干净。
+      var m = (S.model && !S.model._external) ? S.model.key : null;
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        model: S.model ? S.model.key : null,
+        model: m,
         stage: S.stageTheme,
         speed: S.speed,
         listLoop: S.autoPlayAll,
@@ -220,12 +352,85 @@
 
   // ---------- 1. 发现模型 ----------
   // 两级降级：
-  //   A. models.json（项目根目录下，由 models_tool.py 生成；直接读文件，不限流、任意托管、离线可用）
+  //   A. models.json（仓库根目录，由 models_tool.py 生成；直接读文件，不限流、任意托管、离线可用）
   //   B. 内置兜底清单（A 不可用时仍能跑）
   function fetchJSON(url) {
     return fetch(url, { cache: 'no-cache' }).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + url);
       return r.json();
+    });
+  }
+
+  // 按候选基址依次尝试（主 → 备），第一个成功的胜出并把 S_modelsBase 钉在它上面。
+  // make(rel) 负责把「仓库内相对路径」转成这次要请求的 URL —— 这样调用方
+  // 只需要给出 'models.json' 这种仓库内路径，不必关心当前用的是 raw 还是 CDN。
+  // 本机相对模式（S_baseCandidates 为空）时只试一次。
+  function fetchWithFallback(make, rel) {
+    var cands = S_baseCandidates.length ? S_baseCandidates : [''];
+    var lastErr = null;
+    function attempt(i) {
+      if (i >= cands.length) throw (lastErr || new Error('没有可用的模型来源'));
+      var base = cands[i];
+      return make(base, rel).then(function (v) {
+        if (S_modelsBase !== base) { S_modelsBase = base; S_baseName = baseName(base); }
+        pinBranch(base);
+        return v;
+      }, function (e) {
+        lastErr = e;
+        if (i + 1 < cands.length) {
+          console.warn('[viewer] 模型源不可用，切换备用源：' + base, e && e.message);
+        }
+        return attempt(i + 1);
+      });
+    }
+    return attempt(0);
+  }
+
+  function baseName(base) {
+    if (!base) return 'local';
+    return /jsdelivr/i.test(base) ? 'cdn' : 'raw';
+  }
+  var S_baseName = 'local';
+
+  // 按当前（或候选）基址取一个仓库内文件
+  function fetchRepoJSON(rel) {
+    return fetchWithFallback(function (base, r) {
+      return fetchJSON(base ? (base + encodeRepoPath(r)) : r);
+    }, rel);
+  }
+
+  // 切到下一个候选源。返回 true = 真的切过去了。
+  //
+  // ⚠️ 为什么需要它：上面的 `fetchWithFallback` 只在**读 models.json 时**探源 ——
+  //    一个文件探不出「源半死」：raw.githubusercontent.com 在批量请求下会限速（429），
+  //    完全可能「models.json（20KB，一个请求）取得到，而模型的几十个文件全 429」。
+  //    实测（探针 F 组）：这种情况下列表能列出来 42 个模型，但**每一个都载入失败**，
+  //    而且永远死钉在 raw 上、不会自己去用 jsDelivr —— 页面看着像坏了。
+  //    所以模型资源失败时要能再切一次。
+  function advanceModelsBase() {
+    if (!S_baseCandidates.length) return false;        // 本机同源模式，没别的可切
+    var i = S_baseCandidates.indexOf(S_modelsBase);
+    if (i < 0) i = 0;
+    if (i + 1 >= S_baseCandidates.length) return false; // 已经是最后一个候选
+    S_modelsBase = S_baseCandidates[i + 1];
+    S_baseName = baseName(S_modelsBase);
+    console.warn('[viewer] 模型资源取不到，切到备用源：' + S_modelsBase);
+    return true;
+  }
+
+  // 分支探明之后，把候选表收窄成「同一分支的两个源」。
+  //
+  // ⚠️⚠️ 为什么必须收窄：switchModel 载入失败时，每个模型**只给一次**换源重试
+  //    （m._srcRetried 守卫）。若候选表一直留着 4 项，raw 被限速时那唯一一次重试
+  //    会撞到 raw@main —— 同样是 raw、同样被限速 —— 于是直接放弃，反而比改造前
+  //    更差（那时下一项就是 jsDelivr）。收窄之后「重试一次 = 换一个源」，
+  //    语义与改造前完全一致。
+  function pinBranch(base) {
+    var br = S_branchByBase[base];
+    if (!br) return;
+    var srcs = S_forcedSrc ? [S_forcedSrc] : ['raw', 'cdn'];
+    S_baseCandidates = srcs.map(function (s) {
+      return (s === 'cdn') ? cdnBaseOf(br) : rawBaseOf(br);
     });
   }
 
@@ -250,9 +455,12 @@
     els.ghLink.title = '打开 GitHub 仓库 · ' + url;
   }
 
-  // A. 读取 models_tool.py 生成的索引（项目根目录下的 models.json）
+  // A. 读取 models_tool.py 生成的索引（仓库根目录的 models.json）
+  // ⚠️ 它是「清单」—— 与页面同源发布只是历史巧合：模型分离后它跟模型一起留在
+  //    master，页面从外部基址取。**它是「新增模型能否被看到」的关键**：
+  //    模型文件传上去、清单没更新的话，页面列表里根本不会出现它。
   function discoverFromIndex() {
-    return fetchJSON('models.json').then(function (d) {
+    return fetchRepoJSON('models.json').then(function (d) {
       var list = (d && d.models) || [];
       if (!list.length) throw new Error('models.json 为空');
       return list;
@@ -300,12 +508,85 @@
   }
 
   // ---------- 2. 侧栏渲染 ----------
-  // 侧栏当前「看得见」的模型，**顺序与侧栏里显示的一致**。
+  // 侧栏的分组 = 模型在仓库里的**文件夹路径**，逐级嵌套：
+  //   · 本仓库的模型   → models/ 下的目录（models.json 的 group，多级用 / 拼）
+  //   · 外部源的模型   → 最外层多套一层 owner（表示「来自哪个仓库」），里面仍是它自己的目录
+  //   · 本地导入的模型 → 固定挂在「本地模型」下
   //
-  // ⚠️ 不能直接返回 S.models：renderModels() 会把「有分组的」排在前面、顶层散放的排在最后，
-  //    两者顺序不一样。而「列表循环」的「列表」正是用户眼前这个列表，
-  //    用 S.models 的顺序轮播会让侧栏高亮忽前忽后地跳。
-  //    所以把排序规则收敛到这一个函数里，渲染和轮播共用，别再各写一份。
+  // ⚠️ 分组层级的唯一来源是 m.group（decorate 里由 path 推出，models.json 也可能直接给）。
+  //    2026-09-22 之前外部源把 group 强制改成 owner，等于把整个仓库压成一层 ——
+  //    'Azue Lane(JP)/aierdeliqi_4' 在侧栏里完全看不出文件夹结构。现在 owner 只是最外那层。
+  function folderPathOf(m) {
+    var segs = String(m.group || '').split('/').filter(Boolean);
+    return m._external ? [m._external.owner].concat(segs) : segs;
+  }
+
+  // 按文件夹路径把模型组织成树。节点 = { name, key, extOwner, children, items }
+  //   key 是「从根到本节点」的完整路径，同时用作折叠状态的键 —— 不同外部源下的同名文件夹
+  //   因此互不影响（'fakeowner/Azue Lane(JP)' vs 本仓库的 'Azue Lane(JP)'）。
+  function buildFolderTree(list) {
+    var root = { name: '', key: '', extOwner: null, children: [], items: [] };
+    list.forEach(function (m) {
+      var node = root, path = folderPathOf(m);
+      path.forEach(function (seg, i) {
+        var child = null;
+        for (var j = 0; j < node.children.length; j++) {
+          if (node.children[j].name === seg) { child = node.children[j]; break; }
+        }
+        if (!child) {
+          child = { name: seg, key: (node.key ? node.key + '/' : '') + seg,
+                    // 第一段且来自外部源 → 这层就是「哪个仓库」，记下 owner 给 ✕ 用
+                    extOwner: (i === 0 && m._external) ? m._external : null,
+                    children: [], items: [] };
+          node.children.push(child);
+        } else if (i === 0 && m._external && !child.extOwner) {
+          // owner 名恰好和本仓库某个文件夹同名时，这层会被两边共用（本仓库的模型先建了节点）。
+          // 补上 owner —— 否则 ✕（移除整组）会静默消失，外部源就再也删不掉了。
+          child.extOwner = m._external;
+        }
+        node = child;
+      });
+      node.items.push(m);
+    });
+    sortTree(root);
+    return root;
+  }
+
+  // 每层顺序：子文件夹在前（组名升序，本地导入固定最后），本层散放的模型在后。
+  // 与改造前一致 —— 原来「有分组的排前面、顶层散放最后」的规则原样保留。
+  function sortTree(node) {
+    node.children.sort(function (a, b) { return cmpGroupKey(a.name, b.name); });
+    node.children.forEach(sortTree);
+  }
+
+  function cmpGroupKey(a, b) {
+    if (a === b) return 0;
+    if (!a) return 1;
+    if (!b) return -1;
+    if (a === LOCAL_GROUP) return 1;
+    if (b === LOCAL_GROUP) return -1;
+    return a.toLowerCase() < b.toLowerCase() ? -1 : 1;
+  }
+
+  // 深度优先展开（子文件夹 → 本层散放）。这个顺序**就是**侧栏里看到的顺序。
+  //
+  // ⚠️ 「列表循环」的「列表」正是用户眼前这个列表，必须与渲染顺序严格一致，
+  //    否则轮播时侧栏高亮会忽前忽后地跳。所以顺序只在这里定义一次，渲染和轮播共用。
+  function flattenTree(node, out) {
+    out = out || [];
+    node.children.forEach(function (ch) { flattenTree(ch, out); });
+    node.items.forEach(function (m) { out.push(m); });
+    return out;
+  }
+
+  // 节点下的模型总数（含所有子层）—— 分组头右侧那个数字
+  function countOf(node) {
+    var n = node.items.length;
+    node.children.forEach(function (ch) { n += countOf(ch); });
+    return n;
+  }
+
+  // 侧栏当前「看得见」的模型，顺序与侧栏里显示的一致
   function visibleModels() {
     var kw = (els.modelSearch.value || '').trim().toLowerCase();
     var matched = S.models.filter(function (m) {
@@ -314,26 +595,7 @@
       return hay.indexOf(kw) !== -1;
     });
     if (kw) return matched;   // 搜索时是平铺展示，顺序就是 S.models 的顺序
-
-    // 默认按分组折叠展示：有分组的排在前面（组名升序），顶层散放的最后
-    var groups = {}, order = [];
-    matched.forEach(function (m) {
-      var g = m.group || '';
-      if (!groups[g]) { groups[g] = []; order.push(g); }
-      groups[g].push(m);
-    });
-    order.sort(function (a, b) {
-      if (a === b) return 0;
-      if (!a) return 1;
-      if (!b) return -1;
-      // 本地模型固定排到最后
-      if (a === LOCAL_GROUP) return 1;
-      if (b === LOCAL_GROUP) return -1;
-      return a.toLowerCase() < b.toLowerCase() ? -1 : 1;
-    });
-    var out = [];
-    order.forEach(function (g) { out = out.concat(groups[g]); });
-    return out;
+    return flattenTree(buildFolderTree(matched));
   }
 
   function renderModels() {
@@ -343,10 +605,14 @@
     // 顺序已经由 visibleModels() 定好（组名升序、顶层最后），这里只管画
     var matched = visibleModels();
 
+    // 来源标注：清单从哪来 + 模型从哪个源取（raw / jsDelivr / 本机）。
+    // 分离部署后「模型来自外部 CDN」是件用户该看得见的事 —— 出问题时一眼知道该查谁。
     var srcLabel = { index: 'models.json', fallback: '内置清单' }[S.source] || '';
+    var baseTag = { raw: 'raw', cdn: 'jsDelivr', local: '' }[S_baseName] || '';
+    var tag = [srcLabel, baseTag].filter(Boolean).join(' · ');
     els.modelCount.textContent = kw
       ? matched.length + ' / ' + S.models.length + ' 个'
-      : '共 ' + S.models.length + ' 个' + (srcLabel ? ' · ' + srcLabel : '');
+      : '共 ' + S.models.length + ' 个' + (tag ? ' · ' + tag : '');
 
     if (!matched.length) {
       var empty = document.createElement('div');
@@ -363,28 +629,23 @@
       return;
     }
 
-    // 默认按分组折叠展示（顺序已经排好，这里只切段，不要再排一次）
-    var groups = {}, order = [];
-    matched.forEach(function (m) {
-      var g = m.group || '';
-      if (!groups[g]) { groups[g] = []; order.push(g); }
-      groups[g].push(m);
-    });
+    // 默认按文件夹树折叠展示：顺序已经由 visibleModels() 定好，这里只按树递归画
+    appendTree(els.modelList, buildFolderTree(matched), 0);
+  }
 
-    order.forEach(function (g) {
-      if (!g) {
-        groups[g].forEach(function (m) { els.modelList.appendChild(buildModelItem(m, false)); });
-        return;
-      }
-      els.modelList.appendChild(buildGroup(g, groups[g]));
-    });
+  // 递归画一棵子树：先子文件夹、再本层散放的模型（与 flattenTree 的顺序严格一致）
+  function appendTree(container, node, depth) {
+    node.children.forEach(function (ch) { container.appendChild(buildGroup(ch, depth)); });
+    node.items.forEach(function (m) { container.appendChild(buildModelItem(m, false)); });
   }
 
   function buildModelItem(m, showCrumb) {
     var el = document.createElement('div');
     var active = S.model && m.key === S.model.key;
     el.className = 'model-item' + (active ? ' on' : '');
-    var sub = showCrumb && m.group ? m.group : '';
+    // 搜索结果里标出它属于哪个分组（外部源连 owner 一起标 —— 不然和本仓库的同名文件夹
+    // 分不出谁是谁，这正是这次要解决的问题）
+    var sub = showCrumb ? folderPathOf(m).join('/') : '';
     var meta = '';
     if (m._local) meta = '本地导入' + (m.motions ? ' · ' + m.motions + ' 个动作' : ' · 无动作');
     else if (m.motions) meta = m.motions + ' 个动作';
@@ -398,6 +659,16 @@
       '</div>';
     el.title = m.path + '/' + m.file;
     el.addEventListener('click', function () { switchModel(m); });
+
+    // 外部源模型：右侧加一个「raw / jsDelivr」小标签，让用户一眼看出这是别的仓库的
+    if (m._external) {
+      var tag = document.createElement('div');
+      tag.className = 'ext-tag';
+      tag.textContent = m._external.source === 'cdn' ? 'jsDelivr' : 'raw';
+      tag.title = m._external.owner + ' / ' + m._external.repo + '@' + m._external.branch +
+                  '\n来源：' + (m._external.source === 'cdn' ? 'cdn.jsdelivr.net' : 'raw.githubusercontent.com');
+      el.appendChild(tag);
+    }
 
     // 本地导入的模型只在这次会话里存在（文件在内存里，刷新就没了），
     // 给它一个移除入口，免得列表越攒越长、blob URL 一直不释放。
@@ -420,13 +691,20 @@
     return el;
   }
 
-  function buildGroup(name, list) {
+  // 画一个分组节点（递归）。node 来自 buildFolderTree()：
+  //   node.name    显示名（文件夹名；外部源那层是 owner）
+  //   node.key     折叠状态的键 = 从根到这里的完整路径
+  //   node.extOwner  非空 = 这层是外部源的「源」层，头右侧给个 ✕ 删整组
+  function buildGroup(node, depth) {
     var wrap = document.createElement('div');
     // 默认折叠：只有用户显式展开过的（=== false）才摊开，
     // 没记录的分组一律收起来 —— 40 个模型一次全铺开会占掉整条侧栏。
-    var collapsed = S.collapsed[name] !== false;
+    var collapsed = S.collapsed[node.key] !== false;
     wrap.className = 'group' + (collapsed ? ' collapsed' : '');
-    wrap.dataset.group = name;
+    wrap.dataset.group = node.key;
+    // 层级：0 = 顶层（本仓库的文件夹 / 外部源的 owner），>0 = 更深的子文件夹。
+    // 样式靠 .group-body 的 padding-left 逐层缩进，这个属性只给自动化断言用。
+    wrap.dataset.depth = String(depth);
 
     var head = document.createElement('div');
     head.className = 'group-head';
@@ -436,19 +714,39 @@
         'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
         '<path d="M2.5 4.2 6 7.8l3.5-3.6"/></svg>' +
       '</span>' +
-      '<span class="gname">' + escapeHtml(name) + '</span>' +
-      '<span class="gcount">' + list.length + '</span>';
-    head.title = name + '（点击折叠 / 展开）';
+      '<span class="gname">' + escapeHtml(node.name) + '</span>' +
+      '<span class="gcount">' + countOf(node) + '</span>';
+    head.title = node.key + '（点击折叠 / 展开）';
     head.addEventListener('click', function () {
       var nowCollapsed = !wrap.classList.contains('collapsed');
       wrap.classList.toggle('collapsed', nowCollapsed);
-      S.collapsed[name] = nowCollapsed;
+      S.collapsed[node.key] = nowCollapsed;
       saveState();
     });
 
+    // 外部源的「源」层：加一个「✕」删整组 —— 与列表项里的 mi-rm 同思路，
+    // stopPropagation 防止顺手把分组折叠了。⚠️ 只长在这一层（子文件夹层不带）。
+    if (node.extOwner) {
+      var rm = document.createElement('button');
+      rm.className = 'ext-rm';
+      rm.type = 'button';
+      rm.title = '移除外部源：' + node.extOwner.owner + ' / ' + node.extOwner.repo + '@' + node.extOwner.branch +
+                 '\n（删掉该 owner 在侧栏里的全部模型，本次会话）';
+      rm.setAttribute('aria-label', '移除外部源 ' + node.extOwner.owner);
+      rm.innerHTML = '<svg width="10" height="10" viewBox="0 0 16 16" fill="none" ' +
+                     'stroke="currentColor" stroke-width="2" stroke-linecap="round">' +
+                     '<path d="M4 4l8 8"/><path d="M12 4l-8 8"/></svg>';
+      rm.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        ev.preventDefault();
+        removeExternalSource(node.extOwner.owner);
+      });
+      head.appendChild(rm);
+    }
+
     var body = document.createElement('div');
     body.className = 'group-body';
-    list.forEach(function (m) { body.appendChild(buildModelItem(m, false)); });
+    appendTree(body, node, depth + 1);
 
     wrap.appendChild(head);
     wrap.appendChild(body);
@@ -575,8 +873,15 @@
     // 模型的完整目录：models/<path>
     // 本地导入的模型（m._local）所有文件都是内存里的 blob URL，
     // model3.json 本身也是一个 blob URL，没有「目录」这个概念。
+    // 外部模型（m._external）走自己的 base（owner 的仓库在另一个分支上），
+    // 不能再吃全局 S_modelsBase —— 不然 owner 仓库的模型会跑到这个 fetch 里去找。
+    // ⚠️ 非本地 / 非外部模型走 modelsUrl() —— 它会在「页面与模型分离」的部署形态下
+    //    补上 raw/jsDelivr 的绝对前缀（模型在 master，页面在 gh-pages）。
     var local = m._local || null;
-    var baseUrl = local ? '' : ('models/' + (m.path ? m.path + '/' : ''));
+    var external = m._external || null;
+    var baseUrl = local ? ''
+      : external ? (external.base + 'models/' + (m.path ? m.path + '/' : ''))
+      : modelsUrl('models/' + (m.path ? m.path + '/' : ''));
     S._baseUrl = baseUrl;
     var manifestUrl = local ? local.jsonUrl : (baseUrl + m.file);
     var t0 = Date.now();
@@ -619,6 +924,31 @@
       drainPendingModel();
     }).catch(function (e) {
       S.busyModel = false;
+      // 主源「半死」：清单取到了、模型资源取不到（raw 限速的典型症状）。
+      // 读清单那一步的探源发现不了这种情况，所以这里再给一次机会 ——
+      // 切到备用源，把整次载入重来。每个模型只重试一次，不会来回打转。
+      // ⚠️ 必须在 `S.busyModel = false` **之后**再调 switchModel：
+      //    它开头有 busyModel 守卫，还在忙的话这次重试会被丢进 pending。
+      // ⚠️ 外部模型的「备用源」切的是它自己的（raw↔cdn），不动全局 S_modelsBase ——
+      //    一个外部仓库挂了不能把整个页面的源切走，否则本仓库的模型跟着受害。
+      if (!m._local && !m._srcRetried) {
+        if (m._external) {
+          var alt = altBase(m._external);
+          if (alt) {
+            m._srcRetried = true;
+            // 把 _external 改成备用源，但 key / owner 不变（同一组外部模型）
+            m._external.base = alt.base;
+            m._external.source = alt.source;
+            m._external.url = alt.url;
+            switchModel(m);
+            return;
+          }
+        } else if (advanceModelsBase()) {
+          m._srcRetried = true;
+          switchModel(m);
+          return;
+        }
+      }
       // 载入失败时把舞台清干净，否则会留着上一个模型或半成品状态，
       // 用户再点别的模型时会因为 busyModel / 残留队列而表现异常。
       try {
@@ -655,15 +985,30 @@
     setPlayIcon();
   }
 
+  // 当前模型在侧栏里的折叠键路径，从外到内 —— 外部源是
+  // ['fakeowner', 'fakeowner/Azue Lane(JP)'] 两级，本仓库模型只有一级。
+  // 顶层散放的模型返回空数组（它本来就没有分组可展开）。
+  function folderKeysOf(m) {
+    var keys = [], k = '';
+    folderPathOf(m).forEach(function (seg) { k = k ? k + '/' + seg : seg; keys.push(k); });
+    return keys;
+  }
+
   function revealActiveModel() {
-    if (!S.model || !S.model.group) return;
+    if (!S.model) return;
+    var keys = folderKeysOf(S.model);
+    if (!keys.length) return;
     // ⚠️ 第一次调用必须「只记账不动作」：boot() 里第一个模型载入完就会走到这里，
     //    照常展开的话用户第一眼看到的还是摊开的分组，「默认不展开」就白设了。
     //    之后的切换（列表循环自动切、本地导入上架）才真的展开，否则用户
     //    根本不知道画面换成了谁。
     if (!S._revealedOnce) { S._revealedOnce = true; return; }
-    if (S.collapsed[S.model.group] === false) return;
-    S.collapsed[S.model.group] = false;
+    // 逐层展开 —— 外部源要展开「源」和里面的文件夹两层，只展开一层等于没展开
+    var changed = false;
+    keys.forEach(function (k) {
+      if (S.collapsed[k] !== false) { S.collapsed[k] = false; changed = true; }
+    });
+    if (!changed) return;
     saveState();
     renderModels();
   }
@@ -929,7 +1274,7 @@
   function packCurrentModel() {
     var m = S.model;
     if (!m) return Promise.reject(new Error('还没有选中模型'));
-    var baseUrl = 'models/' + (m.path ? m.path + '/' : '');
+    var baseUrl = modelsUrl('models/' + (m.path ? m.path + '/' : ''));
     var root = (m.path ? m.path.split('/').pop() : '') || m.name || 'model';
 
     return fetchJSON(baseUrl + m.file).then(function (mf) {
@@ -1037,6 +1382,318 @@
 
   function zipError(msg) { var e = new Error(msg); e.zipError = true; return e; }
 
+  // ---------- 「添加外部模型源」 ----------
+  //
+  // 需求：把别人仓库里 models.json 的链接粘过来，自动按 owner 分组、把里面的模型
+  //       全部加到侧栏。模型实际文件在那个人仓库的 models/ 子目录下，地址用
+  //       「解析出的 base + 'models/' + path」拼。
+  //
+  // ⚠️ 与「本地预览」的区别：本地预览是把字节读进内存、用 blob URL 渲染（不出浏览器），
+  //    这里走的是远端 fetch，模型资源仍在那个人的仓库里 —— 删了 / 限速就加载失败，
+  //    这是设计上的取舍，不掩饰。
+  //
+  // 关键约束（全部踩过坑）：
+  //   · 解析失败要弹错对话框，**不动 S.models** —— 一个无效 URL 不能让现有列表炸掉。
+  //   · 外部模型条目要打 `_external` 标记、`key` 用 'ext:<owner>:' 前缀，避免与本仓库的
+  //     key 撞；switchModel 看到 `_external` 时改走自己的 base，不再吃全局 S_modelsBase。
+  //   · catch 里的「源半死自救」要按外部模型自己的源（raw↔cdn）切，不能动全局 S_modelsBase
+  //     —— 否则一个外部仓库挂了、把整个页面的源切走了，本仓库的模型也跟着受害。
+  //   · 重复加同 owner：旧的全部撤掉，新的顶上。owner 是分组的唯一标识，必须收敛。
+  //   · 当前模型若在被移除的 owner 里，要切回本仓库的 S.models[0]，不能让它指向已删除的条目。
+  function parseExternalUrl(input) {
+    var s = String(input || '').trim();
+    if (!s) throw new Error('请填入一个 models.json 链接');
+    var u;
+    try { u = new URL(s); } catch (e) { throw new Error('链接不是合法 URL'); }
+
+    var host = u.hostname.toLowerCase();
+    var owner, repo, branch, source, base;
+    if (host === 'raw.githubusercontent.com') {
+      // /<owner>/<repo>/refs/heads/<branch>/models.json → 过滤空段后长度 6
+      //   seg[0]=owner [1]=repo [2]=refs [3]=heads [4]=branch [5]=models.json
+      var seg = u.pathname.split('/').filter(Boolean);
+      if (seg.length < 6 || seg[2] !== 'refs' || seg[3] !== 'heads') {
+        throw new Error('raw 链接必须形如 .../<owner>/<repo>/refs/heads/<分支>/models.json');
+      }
+      if (seg[5] !== 'models.json') {
+        throw new Error('链接末尾必须是 models.json（当前末尾是 ' + seg[5] + '）');
+      }
+      owner = seg[0]; repo = seg[1]; branch = seg[4];
+      source = 'raw';
+      base = 'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/';
+    } else if (host === 'cdn.jsdelivr.net' || host === 'www.jsdelivr.com') {
+      // /gh/<owner>/<repo>@<branch>/models.json → 过滤空段后长度 4
+      var seg2 = u.pathname.split('/').filter(Boolean);
+      if (seg2.length < 4 || seg2[0] !== 'gh' || seg2[2].indexOf('@') < 0) {
+        throw new Error('jsDelivr 链接必须形如 /gh/<owner>/<repo>@<分支>/models.json');
+      }
+      var at = seg2[2].indexOf('@');
+      owner = seg2[1];
+      repo = seg2[2].slice(0, at);
+      branch = seg2[2].slice(at + 1);
+      if (seg2[3] !== 'models.json') {
+        throw new Error('链接末尾必须是 models.json（当前末尾是 ' + seg2[3] + '）');
+      }
+      source = 'cdn';
+      base = 'https://cdn.jsdelivr.net/gh/' + owner + '/' + repo + '@' + branch + '/';
+    } else {
+      throw new Error('目前只支持 raw.githubusercontent.com 与 cdn.jsdelivr.net，识别到的是 ' + host);
+    }
+    if (!owner || !repo || !branch) throw new Error('owner / repo / branch 至少有一个解析不出来');
+    return { owner: owner, repo: repo, branch: branch, source: source, base: base, url: s };
+  }
+
+  // 给某个外部源构造一份「另一镜像」的 base；找不到就返回 null。
+  // raw → cdn，cdn → raw。两者域名规范必须严格匹配 owner/repo/branch。
+  function altBase(info) {
+    if (!info) return null;
+    if (info.source === 'raw') {
+      return {
+        owner: info.owner, repo: info.repo, branch: info.branch, source: 'cdn',
+        base: 'https://cdn.jsdelivr.net/gh/' + info.owner + '/' + info.repo + '@' + info.branch + '/',
+        url: 'https://cdn.jsdelivr.net/gh/' + info.owner + '/' + info.repo + '@' + info.branch + '/models.json'
+      };
+    }
+    if (info.source === 'cdn') {
+      return {
+        owner: info.owner, repo: info.repo, branch: info.branch, source: 'raw',
+        base: 'https://raw.githubusercontent.com/' + info.owner + '/' + info.repo + '/' + info.branch + '/',
+        url: 'https://raw.githubusercontent.com/' + info.owner + '/' + info.repo + '/refs/heads/' + info.branch + '/models.json'
+      };
+    }
+    return null;
+  }
+
+  // 拉一份外部源的 models.json。如果主源失败，自动试另一个（与 fetchWithFallback 同思路）。
+  // 返回 { info, rawList }：info.base 可能是被替换过的（指向实际成功的那个源）。
+  function fetchExternalModelsJson(info) {
+    function attemptOnce(target) {
+      // base 已经是「仓库根」末位带 /，拼 models.json 即可
+      //   raw   → https://raw.githubusercontent.com/<owner>/<repo>/<branch>/models.json
+      //   jsDelivr → https://cdn.jsdelivr.net/gh/<owner>/<repo>@<branch>/models.json
+      // ⚠️ 不能用 target.url + 'models.json'：用户输入的 URL 路径结构不一样
+      //   （raw 要走 refs/heads 分支目录、jsDelivr 不走），base 是统一规范过的。
+      return fetch(target.base + 'models.json', { cache: 'no-cache' })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (d) {
+          var list = (d && d.models) || [];
+          if (!list.length) throw new Error('models.json 为空');
+          return { info: target, rawList: list };
+        });
+    }
+    var other = altBase(info);
+    return attemptOnce(info).catch(function (e1) {
+      if (!other) throw e1;
+      console.warn('[viewer] 外部源不可用，切换备用：' + info.url, e1 && e1.message);
+      return attemptOnce(other).catch(function (e2) {
+        var e = new Error('两个镜像都拉不到 models.json');
+        e.reasons = [e1 && e1.message, e2 && e2.message].filter(Boolean);
+        throw e;
+      });
+    });
+  }
+
+  // 把一份外部源的清单合进 S.models。
+  //   · 同 owner 的旧条目全部撤掉（避免重复）
+  //   · 给每条标 _external，让 switchModel 走自己的 base
+  //   · key 用 'ext:<owner>:<path>/<file>' 前缀，跟本仓库的 'path/file' 区分开
+  //   · group **原样保留**（清单里的文件夹路径）—— 侧栏层级由它决定；最外面那层
+  //     owner 是 folderPathOf() 现加的，不写进 group（写进去就把整个仓库压成一层了）
+  // 返回加进去的条目数组（按 owner 过滤后的新清单）。
+  function mergeExternalModels(info, rawList) {
+    var owner = info.owner;
+    // 先把旧的同 owner 全部从 S.models 撤掉（如果在切换，busyModel 还在忙等稍后处理）
+    for (var i = S.models.length - 1; i >= 0; i--) {
+      if (S.models[i]._external && S.models[i]._external.owner === owner) {
+        S.models.splice(i, 1);
+      }
+    }
+    var added = [];
+    rawList.forEach(function (raw) {
+      if (!raw || !raw.file) return;     // 跳过空条目，graceful
+      var m = decorate([raw])[0];         // 走正常 decorate 流程补 group/parts/key
+      m._external = { owner: owner, repo: info.repo, branch: info.branch,
+                      source: info.source, base: info.base, url: info.url };
+      m.key = 'ext:' + owner + ':' + m.path + '/' + m.file;
+      // 拷贝信息到 decorate 漏掉的字段
+      m.name = raw.name || m.name;
+      S.models.push(m);
+      added.push(m);
+    });
+    return added;
+  }
+
+  // 用户按「读取并添加」：fetch + 合进列表 + 重渲染 + 切到第一个新模型。
+  function addExternalSource(info, onDone) {
+    if (S.busyModel) {
+      toast('模型正在载入，等它完事再加外部源', { type: 'warn' });
+      return Promise.reject(new Error('busy'));
+    }
+    setSrcStatus('正在拉取 ' + info.owner + '/' + info.repo + '@' + info.branch + ' 的清单…', '');
+    showOverlay('正在拉取外部清单…', info.url, false, true);
+    return fetchExternalModelsJson(info).then(function (res) {
+      var used = res.info;
+      var added = mergeExternalModels(used, res.rawList);
+      setSrcStatus('已加入 ' + added.length + ' 个模型（来自 ' + used.owner + '/' + used.repo + '，' + (used.source === 'cdn' ? 'jsDelivr' : 'raw') + '）', '');
+      showOverlay('已加入 ' + added.length + ' 个模型', used.owner + '/' + used.repo, false, true);
+      renderModels();
+      if (added.length) {
+        // 把当前模型切到这个新组的第一项（与本地预览一致：添加完直接看）
+        switchModel(added[0]);
+      }
+      // 短暂显示成功状态后自动关弹窗
+      setTimeout(function () {
+        hideOverlay();
+        closeSrcDialog();
+      }, 380);
+      if (typeof onDone === 'function') onDone(null, { added: added, info: used });
+    }).catch(function (e) {
+      hideOverlay();
+      setSrcStatus('');
+      setSrcError('拉不到 models.json\n' + (e && e.message ? e.message : String(e)) +
+                  (e.reasons ? '\n  · raw: ' + (e.reasons[0] || '') +
+                              '\n  · jsDelivr: ' + (e.reasons[1] || '') : ''));
+      if (typeof onDone === 'function') onDone(e);
+    });
+  }
+
+  // 移除某个 owner 的所有外部模型。S.model 若在该组里，先切走再删。
+  function removeExternalSource(owner) {
+    if (!owner) return;
+    var hit = false, currentRemoved = false;
+    for (var i = S.models.length - 1; i >= 0; i--) {
+      if (S.models[i]._external && S.models[i]._external.owner === owner) {
+        if (S.model && S.model === S.models[i]) currentRemoved = true;
+        S.models.splice(i, 1);
+        hit = true;
+      }
+    }
+    if (!hit) return;
+    renderModels();
+    if (currentRemoved) {
+      // 切回本仓库的第一项（或任意剩余条目）；保证当前模型永远指向有效条目
+      var next = null;
+      for (var k = 0; k < S.models.length; k++) {
+        if (!S.models[k]._external) { next = S.models[k]; break; }
+      }
+      if (next) switchModel(next);
+      else showOverlay('没有可预览的模型了', '请再加一个外部源或刷新页面', true, false);
+    }
+    toast('已移除外部源 ' + owner, { type: 'info' });
+  }
+
+  function setSrcStatus(msg, detail) {
+    if (!els.srcStatus) return;
+    var text = msg ? (detail ? msg + ' · ' + detail : msg) : '';
+    els.srcStatus.hidden = !text;
+    if (els.srcStatusText) els.srcStatusText.textContent = text;
+  }
+  function setSrcError(msg) {
+    if (!els.srcErr) return;
+    els.srcErr.hidden = !msg;
+    els.srcErr.textContent = msg ? String(msg) : '';
+  }
+
+  // 记住 / 取回上次填的外部源链接。只存两样：URL 和当时选中的源（raw / cdn）——
+  // 后者也得记，不然下次预填出来的「实际生效地址」跟上次看到的不一样。
+  function loadExtSrcPref() {
+    try { return JSON.parse(localStorage.getItem(EXTSRC_KEY) || 'null') || {}; } catch (e) { return {}; }
+  }
+  function saveExtSrcPref(url, src) {
+    try {
+      if (!url) localStorage.removeItem(EXTSRC_KEY);   // 用户清空了输入框 = 主动忘掉
+      else localStorage.setItem(EXTSRC_KEY, JSON.stringify({ url: url, src: src || 'raw' }));
+    } catch (e) { /* 隐私模式下写不进去，忽略 */ }
+  }
+  // 把输入框当前的内容记下来（对话框关闭 / 输入变化 / 添加成功时都调一次）
+  function persistSrcUrl() {
+    if (!els.srcUrl) return;
+    saveExtSrcPref(els.srcUrl.value.trim(), pickedSrcKind());
+  }
+  // 段控件（raw / jsDelivr）的选中态
+  function applySrcKind(kind) {
+    if (!els.srcSeg) return;
+    if (kind !== 'cdn') kind = 'raw';
+    Array.prototype.forEach.call(els.srcSeg.querySelectorAll('.src-seg-opt'), function (x) {
+      x.classList.toggle('on', x.getAttribute('data-src') === kind);
+    });
+  }
+
+  function openSrcDialog() {
+    if (!els.srcModal) return;
+    // 手机端先把抽屉收掉，否则对话框被压在侧栏底下（见 closeNavForDialog）
+    closeNavForDialog();
+    S.srcOpen = true;
+    els.srcModal.hidden = false;
+    setSrcStatus('');
+    setSrcError('');
+    // 预填上次填过的链接（只在输入框还空着时填 —— 用户自己清空过就别再塞回去）
+    var pref = loadExtSrcPref();
+    if (els.srcUrl && !els.srcUrl.value && pref.url) {
+      els.srcUrl.value = pref.url;
+      applySrcKind(pref.src);
+    }
+    if (els.srcUrl) { try { els.srcUrl.focus(); } catch (e) {} }
+    refreshSrcPreview();
+  }
+  function closeSrcDialog() {
+    if (!els.srcModal) return;
+    persistSrcUrl();          // 关窗即记住（下次打开预填）
+    S.srcOpen = false;
+    els.srcModal.hidden = true;
+    setSrcStatus('');
+    setSrcError('');
+  }
+
+  // 输入框或段控件变化时，重新解析并显示预览。
+  // 解析规则：
+  //   · URL 必须能被 parseExternalUrl 识别（域名是 raw 或 jsDelivr），拿 owner/repo/branch
+  //   · 实际要用的源**由段控件说了算**：用户粘 raw URL 但想换成 jsDelivr 加速？直接切段控件
+  //     就行，地址自动重拼成 jsDelivr 的形式（owner/repo/branch 不变）。
+  function refreshSrcPreview() {
+    if (!els.srcUrl || !els.srcRepo || !els.srcBranch || !els.srcEffective) return;
+    var raw = els.srcUrl.value.trim();
+    var picked = pickedSrcKind();
+    if (!raw) {
+      els.srcRepo.textContent = '—';
+      els.srcBranch.textContent = '—';
+      els.srcEffective.textContent = '—';
+      if (els.srcPreview) els.srcPreview.classList.remove('invalid');
+      return;
+    }
+    try {
+      var info = parseExternalUrl(raw);
+      // 段控件强制选源 —— 用解析出的 owner/repo/branch 重新拼 base
+      if (info.source !== picked) {
+        info = { owner: info.owner, repo: info.repo, branch: info.branch,
+                 source: picked, base: rebuildBase(info.owner, info.repo, info.branch, picked),
+                 url: raw };
+      }
+      els.srcRepo.textContent = info.owner + ' / ' + info.repo;
+      els.srcBranch.textContent = info.branch;
+      els.srcEffective.textContent = info.source === 'cdn' ? 'cdn.jsdelivr.net' : 'raw.githubusercontent.com';
+      if (els.srcPreview) els.srcPreview.classList.remove('invalid');
+    } catch (e) {
+      els.srcRepo.textContent = String((e && e.message) || e);
+      els.srcBranch.textContent = '—';
+      els.srcEffective.textContent = '无法解析';
+      if (els.srcPreview) els.srcPreview.classList.add('invalid');
+    }
+  }
+  function pickedSrcKind() {
+    if (!els.srcSeg) return 'raw';
+    var opt = els.srcSeg.querySelector('.src-seg-opt.on');
+    return opt ? opt.getAttribute('data-src') : 'raw';
+  }
+  function rebuildBase(owner, repo, branch, source) {
+    return source === 'cdn'
+      ? 'https://cdn.jsdelivr.net/gh/' + owner + '/' + repo + '@' + branch + '/'
+      : 'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/';
+  }
+
   // ---------- 提示条 ----------
   var TOAST_ICON = { ok: '\u2713', warn: '!', error: '\u2715', info: 'i' };
 
@@ -1116,7 +1773,12 @@
 
   function clearOtherModelCache() {
     if (!S.model) { toast('没有正在播放的模型', { type: 'warn' }); return; }
-    var curPrefix = S.model._local ? null : ('models/' + (S.model.path || ''));
+    // 当前模型的前缀：用来认出「哪些缓存是本模型的」。
+    // ⚠️ 必须用 modelsUrl() 解析后的地址 —— 纹理缓存的 key 是**实际请求到的
+    //    URL**（分离部署下是 raw/CDN 的绝对地址），拿 'models/xxx' 这种仓库内
+    //    相对路径去 indexOf 永远匹配不上 → 会把当前模型的纹理也当「其他」清掉。
+    //    （本地导入走 blob: 前缀，按原样处理。）
+    var curPrefix = S.model._local ? null : modelsUrl('models/' + (S.model.path || ''));
     var curBlobs = {};
     if (S.model._local && S.model._local.relByUrl) {
       var rels = S.model._local.relByUrl;
@@ -1555,6 +2217,9 @@
   //    落点十有八九在下面的要求清单上，只挂虚线框就会「拖了没反应」。
   function openLocalDialog() {
     if (!els.localModal) return;
+    // 手机端先把抽屉收掉 —— 入口（侧栏底部那个通栏按钮）就在抽屉里，
+    // 不收的话对话框整个被压在侧栏底下（见 closeNavForDialog）
+    closeNavForDialog();
     S.localOpen = true;
     els.localModal.hidden = false;
     setLocalError('');
@@ -2192,6 +2857,9 @@
       return;
     }
     if (S.localOpen) closeLocalDialog();     // 两个对话框不同时开
+    // 手机端先把抽屉收掉（见 closeNavForDialog）。放在这行之后：上面那条
+    // 「没有本地模型」的早退不该把用户的侧栏顺手收掉。
+    closeNavForDialog();
 
     els.contribPick.innerHTML = '';
     list.forEach(function (m) {
@@ -2963,6 +3631,73 @@
     var cb = t.closest('.prow').querySelector('input[data-act="cb"]');
     if (cb) cb.checked = v > 0.001;
     updateFabBadge();
+  }
+
+  // ---------- 「添加外部模型源」对话框绑定 ----------
+  // 与「本地预览」「贡献模型」同一套思路：挂在 .stage 内（不能漏拦 stage 的 pointerdown），
+  // 三个入口（点 + / Esc / 点遮罩）汇到同一个开关，进度写在对话框里。
+  function bindSrcDialog() {
+    if (!els.srcModal) return;
+
+    if (els.btnAddSrc) els.btnAddSrc.addEventListener('click', openSrcDialog);
+    if (els.srcClose) els.srcClose.addEventListener('click', closeSrcDialog);
+    if (els.srcMask) els.srcMask.addEventListener('click', closeSrcDialog);
+    if (els.btnSrcCancel) els.btnSrcCancel.addEventListener('click', closeSrcDialog);
+
+    // ⚠️ 同「本地预览」：弹窗在 .stage 里，pointerdown / wheel 会冒泡给 stage 抢走。
+    els.srcModal.addEventListener('pointerdown', function (ev) { ev.stopPropagation(); });
+    els.srcModal.addEventListener('wheel', function (ev) { ev.stopPropagation(); }, { passive: true });
+
+    // 输入框变化 → 实时刷新解析预览，并在失焦/回车时把链接记下来
+    if (els.srcUrl) {
+      els.srcUrl.addEventListener('input', refreshSrcPreview);
+      els.srcUrl.addEventListener('change', function () { refreshSrcPreview(); persistSrcUrl(); });
+    }
+    // 段控件切换 → 刷新预览 + 记住这次选的源
+    if (els.srcSeg) {
+      Array.prototype.forEach.call(els.srcSeg.querySelectorAll('.src-seg-opt'), function (opt) {
+        opt.addEventListener('click', function () {
+          applySrcKind(opt.getAttribute('data-src'));
+          refreshSrcPreview();
+          persistSrcUrl();
+        });
+      });
+      // 默认 raw
+      if (!els.srcSeg.querySelector('.src-seg-opt.on')) applySrcKind('raw');
+    }
+
+    // 「读取并添加」
+    if (els.btnSrcGo) {
+      els.btnGoHandler = function () {
+        var raw = (els.srcUrl && els.srcUrl.value || '').trim();
+        if (!raw) { setSrcError('请先粘一个 models.json 链接'); return; }
+        setSrcError('');
+        setSrcStatus('解析中…', '');
+        var picked = pickedSrcKind();
+        var info;
+        try {
+          info = parseExternalUrl(raw);
+          // 段控件强制选源 —— 用 owner/repo/branch 重新拼 base
+          if (info.source !== picked) {
+            info = { owner: info.owner, repo: info.repo, branch: info.branch,
+                     source: picked, base: rebuildBase(info.owner, info.repo, info.branch, picked),
+                     url: raw };
+          }
+        } catch (e) {
+          setSrcError('解析失败\n' + (e && e.message ? e.message : String(e)));
+          setSrcStatus('');
+          return;
+        }
+        els.btnSrcGo.disabled = true;
+        addExternalSource(info, function (err) {
+          els.btnSrcGo.disabled = false;
+          if (err) { setSrcError('拉取失败：' + (err.message || err)); return; }
+          // 成功了才记 —— 打错的链接不值得下次再预填
+          persistSrcUrl();
+        });
+      };
+      els.btnSrcGo.addEventListener('click', els.btnGoHandler);
+    }
   }
 
   function bindPartsPanel() {
@@ -3987,6 +4722,8 @@
     // 贡献模型：左下角第二个入口 → 对话框（选模型 / 填令牌 / 看清单）
     bindContribDialog();
     refreshContribBtn();
+    // 添加外部模型源：侧栏头的 + 按钮 → 对话框（粘 URL / 选源 / 解析预览）
+    bindSrcDialog();
     // 部件面板：右下角浮动按钮 + 右抽屉（部件 / 信息/诊断 / 导出画面 / 导出配置）
     bindPartsPanel();
 
@@ -4020,9 +4757,9 @@
       if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
       // 对话框开着时键盘只服务于对话框：Esc 关闭、回车 / 空格在虚线框上是「选文件」。
       // 不拦住的话空格会顺手把动作播/停切换掉。
-      // 两个对话框（本地预览 / 贡献模型）开着时键盘只服务于对话框。
+      // 三个对话框（本地预览 / 贡献模型 / 添加外部源）开着时键盘只服务于对话框。
       // 不拦住的话，在令牌输入框里敲空格会顺手把动作播/停切换掉。
-      if ((S.localOpen || S.contribOpen) && e.key !== 'Escape') return;
+      if ((S.localOpen || S.contribOpen || S.srcOpen) && e.key !== 'Escape') return;
       if (e.key === 'ArrowRight') playMotion(S.current + 1);
       else if (e.key === 'ArrowLeft') playMotion(S.current - 1);
       else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
@@ -4033,10 +4770,12 @@
       // Esc 优先级按现有顺序排，关闭路径不变。
       else if (e.key === 'p' || e.key === 'P') setRightPane(!S.rightPaneOpen);
       // 浏览器原生全屏由 Esc 自己处理；这里兜底「请求被拒、只剩 CSS 全屏」的情况。
-      // 关闭的优先级：贡献对话框 → 本地预览对话框 → 右抽屉 → 抽屉 → 全屏，一次 Esc 只做一件事。
+      // 关闭的优先级：贡献对话框 → 本地预览对话框 → 添加外部源 → 右抽屉 → 抽屉 → 全屏，
+      // 一次 Esc 只做一件事。
       else if (e.key === 'Escape') {
         if (S.contribOpen) closeContribDialog();
         else if (S.localOpen) closeLocalDialog();
+        else if (S.srcOpen) closeSrcDialog();
         else if (S.rightPaneOpen) setRightPane(false);
         // ⚠️ 全屏排在侧栏前面：全屏时侧栏是被 CSS 藏起来的，Esc 若先去折叠它，
         //    用户第一下按下去屏幕上没有任何反应，得按两次才能退出全屏。
@@ -4400,6 +5139,11 @@
     initPixi();
     // 必须在任何模型载入之前打好：本地导入的模型全靠它（见函数上方说明）
     patchModelSettingsResolveURL();
+    // 模型资源基址：必须在 discoverModels() 之前定好，否则读 models.json 时
+    // 还没决定是走本机相对路径还是 raw/CDN 的绝对地址。
+    S_baseCandidates = buildBaseCandidates();
+    S_modelsBase = S_baseCandidates.length ? S_baseCandidates[0] : '';
+    S_baseName = baseName(S_modelsBase);
     bindStagePanZoom();
     bindUI();
     bindFullscreenSync();
@@ -4455,8 +5199,15 @@
       }
 
       // 记录发现来源，便于排查
-      if (S.source === 'index') els.modelCount.title = '来源：models.json';
-      else els.modelCount.title = '来源：内置兜底清单';
+      var srcFrom = (S.source === 'index')
+        ? 'models.json（' + (S_modelsBase ? S_modelsBase + 'models.json' : '随页面同源') + '）'
+        : '内置兜底清单';
+      var branchNow = S_branchByBase[S_modelsBase] || '';
+      var baseFrom = S_modelsBase
+        ? (S_baseName === 'cdn' ? 'jsDelivr CDN' : 'raw.githubusercontent.com') +
+          (branchNow ? ' · ' + branchNow + ' 分支' : '')
+        : '本机同源（models/ 就在页面旁边）';
+      els.modelCount.title = '清单来源：' + srcFrom + '\n模型来源：' + baseFrom;
 
       renderModels();
       // 选初始模型，优先级：?model= 参数 > localStorage 记忆 > 列表第一个
@@ -4477,6 +5228,18 @@
           S: S, els: els, app: S.app,
           mm: motionManager,
           handleLocalZip: handleLocalZip,
+          // 模型资源基址快照（只读）：页面/模型分离后，「模型到底从哪个源取的」
+          // 是排查问题的第一现场 —— 是走了 raw？降级到 jsDelivr？还是被判成本机同源？
+          base: function () {
+            return {
+              base: S_modelsBase,
+              cands: S_baseCandidates.slice(),
+              name: S_baseName,
+              branch: S_branchByBase[S_modelsBase] || '',
+              local: isLocalHost(),
+              source: S.source
+            };
+          },
           // 侧栏悬停调试入口（自动化验收 / 排查用）：**只读**快照，
           // 用来看「展开定时器到底排上没有」「抑制窗口还剩多久」。
           // ⚠️ 合成事件（`document.dispatchEvent(new PointerEvent(...))`）验不出真实鼠标
@@ -4543,6 +5306,56 @@
               return uploadModelToRepo(m, token || '', function () {});
             }
           },
+          // 「添加外部模型源」调试入口。⚠️ addByUrl() 会真的去 fetch 那个 URL —— 自动化
+          // 验收要先把远端域名拦掉，或者喂它一个本地 fake。
+          extSrc: {
+            // 直接传一个 URL 字符串，弹窗里走过的解析 + 拉清单 + 合并流程全部在这里重做
+            addByUrl: function (url) { return addExternalSource(parseExternalUrl(url)); },
+            // 已经解析好的 {owner, repo, branch, source, base} 对象（自动化测试自己拼）
+            add: function (info) { return addExternalSource(info); },
+            // 按 owner 移除整组
+            remove: function (owner) { removeExternalSource(owner); },
+            // 当前在 S.models 里的所有外部模型（只读快照）
+            list: function () {
+              return S.models.filter(function (m) { return !!m._external; })
+                .map(function (m) { return { key: m.key, owner: m._external.owner, repo: m._external.repo,
+                                            branch: m._external.branch, source: m._external.source,
+                                            path: m.path, file: m.file, name: m.name }; });
+            },
+            // UI 操作：开 / 关弹窗
+            open: openSrcDialog,
+            close: closeSrcDialog,
+            // 模拟在弹窗里改段控件（自动化可验证段控件联动）
+            setKind: function (kind) {
+              if (!els.srcSeg) return;
+              Array.prototype.forEach.call(els.srcSeg.querySelectorAll('.src-seg-opt'),
+                function (o) { o.classList.toggle('on', o.getAttribute('data-src') === kind); });
+              refreshSrcPreview();
+            },
+            // 弹窗里的预览快照（自动化验证预览）
+            preview: function () {
+              return {
+                repo: (els.srcRepo && els.srcRepo.textContent) || '',
+                branch: (els.srcBranch && els.srcBranch.textContent) || '',
+                effective: (els.srcEffective && els.srcEffective.textContent) || '',
+                valid: els.srcPreview && !els.srcPreview.classList.contains('invalid')
+              };
+            },
+            // URL 解析（不发起网络）—— 自动化可以拿它核对解析逻辑
+            parse: parseExternalUrl,
+            // 给定一个外部 info，构造另一个镜像（raw↔cdn）
+            altBase: altBase,
+            // 只走「合进 S.models + 渲染」不走网络 —— 验收脚本喂假数据用。
+            // 接受 info 和 rawList（与 fetchExternalModelsJson 返回值同结构）。
+            // ⚠️ 不调 switchModel：外部模型切过去会真去 fetch 该仓库下的模型文件，
+            //    测试用的假数据没那些文件，会走到 switchModel 的 catch 路径污染 S.model。
+            //    想测「能切到外部模型」请走 extSrc.add()（会真拉清单 → 真载入）。
+            injectForTest: function (info, rawList) {
+              var added = mergeExternalModels(info, rawList);
+              renderModels();
+              return added;
+            }
+          },
           playMotion: playMotion,
           togglePlay: togglePlay,
           toggleFullscreen: toggleFullscreen,
@@ -4559,6 +5372,10 @@
           },
           // 模型是否已经切到位（自动化测试要等它变成 true 再采样）
           switchedTo: function (key) { return !!(S.model && S.model.key === key && !S.busyModel); },
+          // 把当前模型的整条文件夹路径展开（含外部源的「源」层）。自动化要验「切到
+          // 外部源里的模型时会逐层展开」——那件事由 loadIntoStage 末尾自动触发，
+          // 而测试环境里外部模型载不进来（假清单没有模型文件），所以留个手动入口。
+          revealActive: function () { revealActiveModel(); return folderKeysOf(S.model || {}); },
           snap: function () {
             var cm = coreModel();
             if (!cm) return null;

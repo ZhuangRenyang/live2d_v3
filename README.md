@@ -19,22 +19,53 @@ python -m http.server 8000
 
 ## 部署到 GitHub Pages
 
-```bash
-git init
-git add .
-git commit -m "Add Live2D model viewer"
-git branch -M main
-git remote add origin https://github.com/<你的用户名>/<仓库名>.git
-git push -u origin main
-```
+页面与模型**分两个分支存放**，这是刻意的：
+
+| 分支 | 放什么 | 体积 |
+|---|---|---|
+| `master` | 全部代码 + `models/` + `models.json` | 200MB+ |
+| `gh-pages` | **只有页面壳**：`index.html`、`assets/`、`.nojekyll`、`models.json` | ~1MB |
+
+Pages 从 `gh-pages` 发布，模型由页面从 `master` 的 raw / jsDelivr 读取。
+
+**为什么要拆**：如果页面和模型同在发布分支上，那么**每次改动都会让 Pages 重新构建整站** ——
+往 `models/` 加一个模型、甚至只是刷新一下 20KB 的 `models.json`，都要等它把 200 多兆的产物
+重新同步一遍。拆开之后：
+
+- **加模型 / 刷新清单** → 只动 `master`，`gh-pages` 一个字节都不用变，页面刷新即生效
+- **改页面代码** → 由 `.github/workflows/pages.yml` 自动把页面壳重发到 `gh-pages`（秒级）
+- **想手动重发一次** → 仓库 **Actions → 左侧「发布页面到 gh-pages」→ Run workflow**，
+  分支选 `master`。工作流是**幂等**的：每轮都重建产物 + orphan 强推，跑几次结果都一样。
 
 推送后在仓库页面进入 **Settings → Pages**：
 
 - **Source** 选择 `Deploy from a branch`
-- **Branch** 选择 `main`，目录选 `/ (root)`
+- **Branch** 选择 `gh-pages`，目录选 `/ (root)`
 - 保存，等一两分钟即可通过 `https://<你的用户名>.github.io/<仓库名>/` 访问
 
+> ⚠️⚠️ **顺序别搞反：先让页面壳进 `gh-pages`，再切 Pages 的分支设置。**
+> 分离之前的老页面是按**相对路径**找 `models/` 的，而 `gh-pages` 上**没有** `models/` ——
+> 先切设置、再发页面，中间那段时间站点上模型全部 404（列表还是 42 个，点谁谁失败）。
+> 正确顺序：① 把页面代码提交到 `master`（工作流会自己发；也可以手动跑一次确认）
+> → ② 确认 `gh-pages` 上是**新版**页面 → ③ 再去 Settings 把分支切成 `gh-pages`。
+
+`gh-pages` 分支由工作流自动创建并维护，**不要手工往上面推东西**（每轮都会被覆盖）。
 仓库根目录已放好 `.nojekyll`，避免 GitHub Pages 的 Jekyll 处理干扰静态资源。
+
+> ⚠️ 工作流检出时用了 **sparse-checkout**（只取 `index.html` / `assets/` / `.nojekyll` /
+> `models.json`）+ `fetch-depth: 1`。不这么做的话，一个「发页面」的活儿会把
+> master 上 263MB 模型 + 190MB 历史全拉下来 —— 而它只需要 1.1MB。
+> **改动那份 sparse 清单时，要同时改「组装」步骤里的 `cp` 清单**（两处必须一致）；
+> 少写一个会因为检出守卫直接失败，不会静默出错。
+
+> ⚠️ 页面里的模型地址写在 `assets/js/app.js` 顶部的 `RAW_BASE` / `CDN_BASE`。
+> 把仓库改名或换用户名后，这两行要跟着改（默认主用 raw、备用 jsDelivr，
+> 主源失败会自动切备源；用 `?src=raw` / `?src=cdn` 可强制指定，方便排查）。
+>
+> **两处都会自动切备源**：① 读 `models.json` 时探到主源不可用；
+> ② 模型资源取不到时（例如 raw 对批量请求限速，而 20KB 的清单恰好取得到）——
+> 这种情况下列表能列出来但每个模型都载入失败，所以载入失败会**再切一次**重试。
+
 
 ## 新增模型
 
@@ -64,10 +95,20 @@ models/
 
 | 顺序 | 方式 | 说明 |
 | --- | --- | --- |
-| 1 | **`models.json`** | 位于**项目根目录**，由 `models_tool.py` 扫描 `models/` 生成。直接读文件，不限流、任意静态托管、离线可用，推荐提交到仓库 |
+| 1 | **`models.json`** | 位于**仓库根目录**，由 `models_tool.py` 扫描 `models/` 生成。直接读文件，不限流、任意静态托管、离线可用，推荐提交到仓库 |
 | 2 | **内置兜底清单** | 写死在脚本里的 `MODELS_FALLBACK`，**只放了一个模型**，仅为保证页面能起来；正常情况下走第 1 级 |
 
 侧栏标题旁会显示当前用的是哪种来源（鼠标悬停可看完整说明）。
+
+> **页面与模型分居两个分支**（见上面「部署到 GitHub Pages」）。页面部署在 `gh-pages` 上时，
+> 这一级会去 `master` / `main` 的 raw / jsDelivr 地址取 `models.json` 与 `models/`；
+> 本机起服务时则走相对路径。侧栏标题旁的来源标注会写出当前是 `raw` / `jsDelivr` / 本机
+> 以及命中的分支，鼠标悬停能看到完整地址 —— 排查「模型没更新」时先看这里。
+>
+> **分支不用你操心**：GitHub 新建仓库默认分支叫 `main`，老仓库多是 `master`，
+> 页面**两个都试**（先 `master` 后 `main`），谁先取到 `models.json` 就用谁。
+> 探明分支之后候选源会收窄成「同一分支的 raw → jsDelivr」两项，
+> 这样「主源半死时换备用源」那唯一一次重试仍然是**换源**而不是换分支。
 
 ### 生成清单（推荐）
 
@@ -129,7 +170,8 @@ moc3 里没有任何参数能改变它 —— 于是本该只在特定动作里�
 | 列表循环 | 默认关闭。关：只在本模型内循环动作，不切模型。开：当前模型全部动作播完后自动切到**模型列表**里的下一个（到末尾回到第一个），一直轮播下去 |
 | 下载模型 | 把当前模型打包成 zip 下载，解压后直接丢进 `models/` 就能用 |
 | **本地预览** | 侧栏左下角的按钮。点开一个对话框，里面写明上传要求，**选择文件**或**把压缩包直接拖进去**都能用；浏览器内解压校验后**直接放进预览**，不用先放进 `models/` 也不用刷新页面。详见下一节 |
-| 快捷键 | `←` `→` 跳到上/下一个动作、`空格` 播放/暂停、`R` 重播当前、`T` 循环切换舞台背景、`F` 全屏、`P` 开关右侧部件面板（右下角按钮点不到时用键盘开）、`Esc` 逐级关闭：贡献对话框 → 本地预览对话框 → 右抽屉 → 全屏 → 侧栏（一次只关一层） |
+| **添加外部模型源** | 侧栏头「模型列表」右边的 **＋** 按钮。粘一条别人仓库的 `models.json` 链接（raw / jsDelivr 均可），自动把那个仓库的模型**按用户名 + 它自己的目录层级**加进左侧列表，可一键移除整组。**填过的链接会记住**（刷新后自动预填）。详见「添加外部模型源」一节 |
+| 快捷键 | `←` `→` 跳到上/下一个动作、`空格` 播放/暂停、`R` 重播当前、`T` 循环切换舞台背景、`F` 全屏、`P` 开关右侧部件面板（右下角按钮点不到时用键盘开）、`Esc` 逐级关闭：贡献对话框 → 本地预览对话框 → 添加外部源对话框 → 右抽屉 → 全屏 → 侧栏（一次只关一层） |
 
 舞台左上角的信息条会显示当前是第几个动作、叫什么名字、多长。
 
@@ -228,6 +270,49 @@ zhala_2.zip
 
 后两种都在传文件**之前**判定，不会白传几十 MB。
 
+### 添加外部模型源：把别人仓库的模型加进列表
+
+侧栏头「模型列表」右边的 **＋** 按钮。粘一条别人仓库 `models.json` 的链接，点「读取并添加」，
+那个仓库里的模型就会出现在左侧列表里，**层级照搬它的目录结构**：
+最外一层是**用户名**（表示「这批模型来自哪个仓库」），里面再按对方仓库的文件夹逐级展开 ——
+比如清单里的 `"path": "Azue Lane(JP)/aierdeliqi_4"`，在侧栏里就是
+`weiraing ▸ Azue Lane(JP) ▸ aierdeliqi_4`（列表项右侧标一个 `raw` / `jsDelivr`
+小标签，用户名那层的分组头上有个 ✕ 可以一键移除整组）。
+
+> **手机端**：点 ＋ 之后侧栏抽屉会**自动收回去**。对话框挂在舞台里（层级低于抽屉），
+> 抽屉不收就会被压在底下，只看得到右边一条缝。「本地预览」「贡献模型」同理。
+
+两种链接都认：
+
+```
+https://raw.githubusercontent.com/<owner>/<repo>/refs/heads/<branch>/models.json
+https://cdn.jsdelivr.net/gh/<owner>/<repo>@<branch>/models.json
+```
+
+**镜像源可切**：对话框里的「镜像源」段控件默认按链接域名走，也可以手动切 —— 比如粘的是 raw 链接
+但国内连得慢，直接切到 jsDelivr，页面会用同一个 `owner/repo/branch` 重新拼地址。粘上链接后
+「解析预览」会实时显示解析出的仓库 / 分支 / 生效源，粘错了当场能看出来。
+
+模型文件从那个仓库的 **`models/` 子目录**下取（`models/<path>/<model3.json>`），
+所以对方仓库的目录结构要跟本仓库一致（`models_tool.py` 生成 `models.json` 的那套）。
+
+几条行为约定：
+
+- **层级照搬对方仓库**：用户名是最外一层，里面按清单里的 `group`（即对方仓库的文件夹路径）
+  逐级展开 —— 本仓库的模型也是这么分组的，两边规则一致。每层默认折叠，展开状态按
+  「用户名/文件夹」的**全路径**单独记（`weiraing/Azue Lane(JP)` 与 `Azue Lane(JP)` 互不影响）；
+  切到外部模型时会自动把整条路径逐层展开。
+- **不持久化**：外部源只活在当前这次会话，刷新页面就没了，下次要用重新加一遍。
+  ⚠️ **但填过的链接会记住**：对话框里的输入框与「镜像源」选择会存进 `localStorage`，
+  刷新网页 / 下次打开自动预填（清空输入框即忘掉）。这样不用每次回去翻仓库页复制地址 ——
+  注意记住的只是**地址**，不是「已加载的模型」。
+- **同一用户名只保留一份**：重复添加同一个 owner 时，旧的整组被新清单替换，不会叠加。
+- **失败自动切镜像**：先用你选的那个源拉，拉不到自动试另一个（raw ↔ jsDelivr）；两个都拉不到
+  才在对话框里报错，并把两个源各自的失败原因一起列出来。
+- **外部模型的备用源也是它自己的**：某个外部模型加载失败时，页面切的是**那个外部源自己的**
+  raw ↔ jsDelivr，不会动本仓库正在用的源 —— 否则一个外部仓库挂掉会把整个页面的模型来源切走。
+- ⚠️ 可用性由对方仓库决定。对方删库 / 改路径 / 限速时，那一组模型就会加载失败。
+
 ### 直接用链接指定模型
 
 地址栏支持 `?model=` 参数，方便分享和调试：
@@ -276,7 +361,8 @@ https://github.com/<owner>/<repo>/releases/latest/download/live2d_v3_models_all.
 ├── models.json                  自动生成的模型清单（项目根目录，可提交）
 ├── models_tool.py               扫描 models/ 生成 models.json；发布时识别并复制新增模型
 ├── .github/workflows/
-│   └── models-release.yml       模型索引与增量发布（每天触发，用「纪元天数 % 7」卡成 7 天）
+│   ├── models-release.yml       模型索引与增量发布（每天触发，用「纪元天数 % 7」卡成 7 天）
+│   └── pages.yml                把页面壳发布到 gh-pages（只含 index.html / assets / .nojekyll / models.json）
 ├── tmp/                         本机测试 / 临时脚本（已 git 忽略，不进 Pages）
 │   ├── _regress.js              无头 Chrome 回归测试
 │   ├── _probe_responsive.js     多端适配专项测试
@@ -290,7 +376,11 @@ https://github.com/<owner>/<repo>/releases/latest/download/live2d_v3_models_all.
 │   ├── _probe_zip.js            下载模型 zip 打包专项测试
 │   ├── _probe_navflicker.js     侧栏开合闪屏专项 · 同步补渲染 + 时间线探针
 │   ├── _probe_export.js         导出截图 / 隐藏配置专项测试
-│   └── _probe_contrib.js        贡献模型上传专项测试（GitHub API 全 mock）
+│   ├── _probe_contrib.js        贡献模型上传专项测试（GitHub API 全 mock）
+│   ├── _probe_pagesplit.js      页面/模型分离专项（本机相对路径 + 假 Pages 域名走 raw/CDN 跨源取模型 + master→main 分支回退）
+│   ├── _probe_extsrc.js         添加外部模型源专项（假域名 + 假远端清单：解析 / 切镜像 / 加层级 / 移除组 / 记住链接 / 手机抽屉让位）
+│   ├── _shot_ext_tree.js        侧栏层级验收图（把本仓库真实 models.json 当外部源注入，出折叠/展开/放大三张图）
+│   └── _certs/                  上面那条要用的自签证书（tmp/ 已被忽略，不会进仓库）
 ├── assets/
 │   ├── css/app.css              页面样式
 │   ├── js/app.js                页面逻辑（ES module）
@@ -310,17 +400,36 @@ https://github.com/<owner>/<repo>/releases/latest/download/live2d_v3_models_all.
 
 ## 验收
 
-八套测试都用无头 Chrome（`ws` + `C:\Program Files\Google\Chrome\Application\chrome.exe`）跑，
+十六套测试都用无头 Chrome（`ws` + `C:\Program Files\Google\Chrome\Application\chrome.exe`）跑，
 从项目根依次执行即可（Git Bash / WSL 下用下面的一行命令）：
 
 ```bash
-export NODE_PATH="$HOME/.workbuddy-ai/binaries/node/workspace/node_modules"
-NODE="$HOME/.workbuddy-ai/binaries/node/versions/22.22.2-2/node.exe"
+# ⚠️ NODE_PATH 必须写成 Windows 形式（C:/…）。写成 "$HOME/…" 时 node.exe 认不出来
+#    （$HOME 展开成 /c/Users/… 这种 POSIX 路径），报 Cannot find module 'ws'。
+export NODE_PATH="C:/Users/rain/.workbuddy-ai/binaries/node/workspace/node_modules"
+NODE="C:/Users/rain/.workbuddy-ai/binaries/node/versions/22.22.2-2/node.exe"
 for s in _regress _probe_responsive _probe_ctrlwrap _probe_cycle _probe_collapse _probe_parts \
-         _probe_navflicker _probe_local _probe_dragreal _probe_hoverreal _probe_zip _probe_export _probe_contrib; do
+         _probe_navflicker _probe_local _probe_dragreal _probe_hoverreal _probe_zip _probe_export \
+         _probe_contrib _probe_models_json _probe_pagesplit _probe_extsrc; do
   "$NODE" "tmp/$s.js" || break
 done
 ```
+
+> ⚠️ `_probe_pagesplit.js` 需要 `tmp/_certs/` 里的自签证书（页面里模型地址是 `https://`，
+> 测试服务必须也起 HTTPS，否则浏览器直接 `ERR_SSL_PROTOCOL_ERROR`）。证书已生成好；
+> 换机器时用这条命令重建一次即可：
+>
+> ```bash
+> mkdir -p tmp/_certs && openssl req -x509 -newkey rsa:2048 -nodes \
+>   -keyout tmp/_certs/key.pem -out tmp/_certs/cert.pem -days 2 \
+>   -subj "/CN=raw.githubusercontent.com" \
+>   -addext "subjectAltName=DNS:raw.githubusercontent.com,DNS:cdn.jsdelivr.net,DNS:weiraing.github.io,DNS:localhost,IP:127.0.0.1"
+> ```
+>
+> ⚠️ `_probe_extsrc.js` 的服务**必须监听 443**（不是随机端口）：假域名走
+> `--host-resolver-rules` 映射到本机，但浏览器对假域名默认连 **443**，而 `MAP` 不按端口分发
+> —— 绑在别的端口上会 `ERR_CONNECTION_REFUSED`。跑之前先确认 443 没被占：
+> `netstat -ano | grep ":443.*LISTENING"`。
 
 | 脚本 | 断言数 | 覆盖 |
 | --- | --- | --- |
@@ -337,8 +446,15 @@ done
 | `tmp/_probe_navflicker.js` | 6 | 侧栏展开/折叠时模型不闪：resize 后必须**同步**补一次渲染（画布改尺寸会清空 WebGL 缓冲） |
 | `tmp/_probe_export.js` | 9 | 导出：截图 / `<模型名>.hidden.json` 配置落盘 |
 | `tmp/_probe_contrib.js` | 73 | 贡献模型：CDP 把 `api.github.com` 全拦下伪造响应，**一个字节都发不出去**；含仓库自动识别 / 手填 / `models.json` 的三种仓库状态 |
+| `tmp/_probe_models_json.js` | 6 | 清单路径：页面只认根目录 `models.json`，不会再去请求废弃的 `models/index.json` |
+| `tmp/_probe_pagesplit.js` | 37 | 页面/模型分离：本机同源走相对路径（回归底线）；假 Pages 域名下走 raw 跨源取到 `models.json` + model3 + moc3 + 纹理；空格/括号/中文逐段编码；`?src=` 强制选源；两个源都挂时降级到内置清单且不白屏；**主源「半死」**（清单取得到、模型资源全 429）时自动切到备用源并载入成功；**分支回退**（`master` 取不到时自动试 `main`，并证明候选表已收窄成同一分支的两个源） |
+| `tmp/_probe_extsrc.js` | 87 | 添加外部模型源：＋ 按钮**位置与样式**（绝对定位、规则在顶层未被 `@media` 包住、与 📌 同一行同尺寸且在左侧；手机端与 × 对齐；侧栏直接子元素仍是 4 个）/ 弹窗三个关闭入口 / raw 与 jsDelivr 链接解析（含各类错误链接）/ 镜像源 raw↔cdn 互转 / 解析预览联动 / **侧栏层级（源 → 文件夹 → 模型：子层嵌在源层内、根目录模型不套子层、计数为子树总数、✕ 只在源层、默认折叠、点开后真的可见、折叠状态按全路径记、切换模型时逐层展开）** / 同 owner 重复添加用最新清单替换 / 移除整组 / **端到端**（假远端清单经真 fetch 走通，成功后弹窗自动关）/ **记住填过的链接**（真 reload 后仍预填，含镜像源选择；清空即忘）/ **手机端抽屉让位**（从抽屉里点 ＋ 或「本地预览」，抽屉自动收起且真的滑出视口） |
 
-合计 **578 项断言，0 失败**。
+合计 **708 项断言，0 失败**。
+
+> ⚠️ `_probe_contrib.js` 的计数会在 **70 / 73** 之间浮动：它的 J 组（模拟 `*.github.io`
+> 自动识别仓库）用带端口的 `--host-resolver-rules` 把假域名指到本机，映射偶尔不生效时
+> 整组 **SKIP**（脚本自己判的，不算失败）。上面按 73 计。这是该脚本既有的偶发现象。
 
 > ⚠️⚠️ 每个脚本都自带静态服务，**MIME 表里必须有 `'.css': 'text/css'`**。
 > 少了这一条，浏览器会把 `assets/css/app.css` 当 `application/octet-stream` 直接丢掉 ——

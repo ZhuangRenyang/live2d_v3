@@ -223,6 +223,13 @@
   .group-body .model-item{ padding:7px 9px; }
   .group-body .model-item .name{ font-size:12.5px; }
 
+  /* 组里还有子层（外部源里的文件夹 / 多级目录）：缩进靠 .group-body 的 padding-left
+     逐层累加，这里只把子层的字号与内边距收一档，让「源 → 文件夹」两级一眼分得开。
+     ⚠️ 只有外部源会出现两级：顶层是 owner（哪个仓库），里面才是它自己的目录结构。 */
+  .group-body .group-head{ padding:6px 8px; }
+  .group-body .group-head .gname{ font-size:11.5px; font-weight:600; }
+  .group-body .group-head .gcount{ font-size:9.5px; padding:0 6px; }
+
   /* 搜索结果里的分组面包屑 */
   .model-item .crumb{
     font-size:10px; color:var(--text-faint); margin-top:1px;
@@ -485,6 +492,41 @@
   }
   .modal-err[hidden]{ display:none; }
 
+  /* 「添加外部模型源」弹窗里的镜像源选择段控件 —— 与「舞台背景」「列表循环」
+     同思路：当前选中加 .on、未选灰白；点击切。 */
+  .src-seg{
+    display:flex; gap:6px; padding:4px; border-radius:10px;
+    border:1px solid var(--line-strong); background:var(--panel-2);
+  }
+  .src-seg-opt{
+    flex:1 1 0; display:flex; align-items:center; justify-content:center; gap:6px;
+    padding:7px 10px; border-radius:7px; cursor:pointer; border:1px solid transparent;
+    background:transparent; color:var(--text-dim); font-size:12px; font-weight:600;
+    transition:.15s;
+  }
+  .src-seg-opt:hover{ color:var(--text); }
+  .src-seg-opt.on{ background:var(--panel); border-color:var(--accent); color:var(--text); box-shadow:var(--shadow-sm); }
+  .src-seg-opt .sw-dot{ width:9px; height:9px; border-radius:50%; flex:0 0 auto; }
+
+  /* 解析预览：三行 owner/repo/branch + 生效源，键值对齐，方便一眼核对 */
+  .src-preview{
+    display:flex; flex-direction:column; gap:5px;
+    padding:9px 11px; border-radius:9px;
+    border:1px solid var(--line); background:var(--panel-2);
+    font-size:12px;
+  }
+  .src-preview-line{ display:flex; gap:10px; align-items:baseline; }
+  .src-preview-line .k{
+    flex:0 0 48px; color:var(--text-faint); font-size:11px;
+    letter-spacing:.5px; text-transform:uppercase; font-weight:700;
+  }
+  .src-preview-line .v{
+    min-width:0; flex:1 1 auto; color:var(--text);
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:11.5px;
+    word-break:break-all;
+  }
+  .src-preview.invalid .v{ color:var(--danger); }
+
   /* ============ 提示条（toast） ============
      挂在 .stage 里而不是 body 上，好处有三：
        · 位置天然跟着舞台走，不用去算顶栏 / 控制条的高度；
@@ -544,6 +586,32 @@
   /* 触屏没有 hover，按钮必须一直可见 */
   @media (pointer:coarse){
     .model-item .mi-rm{ opacity:1; width:26px; height:26px; }
+  }
+
+  /* 外部模型项右侧的「来源小标签」（raw / jsDelivr）。
+     比 .desc 更显眼，但比外部「移除」安静 —— 让人知道这是外部模型但默认不碍眼 */
+  .model-item .ext-tag{
+    flex:0 0 auto; margin-left:auto; padding:1px 6px; border-radius:999px;
+    font-size:10px; font-weight:700; letter-spacing:.4px;
+    border:1px solid var(--line); color:var(--text-faint); background:var(--panel-2);
+    line-height:1.5;
+  }
+  .model-item.on .ext-tag{ border-color:var(--accent); color:var(--accent); }
+
+  /* 外部分组头右侧的「移除整组」按钮 —— 删掉整个 owner 的所有模型。
+     与 .mi-rm 同思路（悬停可见、触屏常显）。放在 .gcount 后面、不抢 .gcount 的位置。
+     ⚠️ 必须排在 .gcount 之后（gcount 用 margin-left:auto 已经顶到右边），
+     改成 display:flex 后 ext-rm 紧贴 gcount 右侧显示。 */
+  .group-head .ext-rm{
+    flex:0 0 auto; margin-left:4px; width:22px; height:22px; border-radius:6px;
+    border:1px solid transparent; background:transparent; color:var(--text-faint);
+    cursor:pointer; display:flex; align-items:center; justify-content:center;
+    opacity:0; transition:opacity .15s, color .15s, border-color .15s;
+  }
+  .group-head:hover .ext-rm, .group.collapsed .ext-rm{ opacity:1; }
+  .group-head .ext-rm:hover{ border-color:var(--danger); color:var(--danger); background:#fdf1f1; }
+  @media (pointer:coarse){
+    .group-head .ext-rm{ opacity:1; width:26px; height:26px; }
   }
 
   /* ============ 全屏：整个屏幕只有模型 ============ */
@@ -640,6 +708,23 @@
   }
   .nav-pin:hover .pin-emo{ opacity:.8; }
   .nav-pin[aria-pressed="true"] .pin-emo{ filter:none; opacity:1; }
+
+  /* 侧栏「添加外部源」按钮 —— 紧贴 .nav-pin 左边，桌面 + 手机都显示（与 📌 一致）。
+     ⚠️ 尺寸/边框/圆角刻意与 .nav-pin / .nav-close 逐项对齐（28×28、8px 圆角、
+     1px solid var(--line-strong)、白底），三个按钮在同一个 .side-head 里必须长得一样。
+     ⚠️ right:46px 是算出来的：.nav-pin 的 right(10px) + 宽度(28px) + 间距(8px)。
+     改 .nav-pin 的位置或尺寸时这里要跟着改，否则会叠在一起或错位。
+     ⚠️⚠️ 这条规则必须在**顶层**、不能落在任何 @media 里 —— 一旦被包进
+     `@media (pointer:coarse)` 之类的块，桌面端就完全不生效，按钮会退化成裸 <button>
+     掉到第二行（「共 N 个」那行下面）。实测踩过：症状是「位置不对」，但 CSS 看着没错。 */
+  .src-btn{
+    display:flex; align-items:center; justify-content:center;
+    position:absolute; right:46px; top:10px;
+    width:28px; height:28px; border-radius:8px; padding:0;
+    border:1px solid var(--line-strong); background:var(--panel);
+    color:var(--text-dim); cursor:pointer; transition:.15s;
+  }
+  .src-btn:hover{ border-color:var(--accent); background:var(--accent-soft); color:var(--accent); }
 
   /* 抽屉拉开时压在舞台上的遮罩：点它就收起侧栏 */
   .nav-scrim{

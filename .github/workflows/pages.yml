@@ -1,0 +1,175 @@
+name: 发布页面到 gh-pages
+
+# ── 这个工作流解决什么问题 ──────────────────────────────────────────────
+# 以前页面和模型都在 master，GitHub Pages 直接从 master 发布整站。
+# 于是「往 models/ 加一个模型」或「刷新一次 models.json」都会让 Pages
+# **重新构建并同步整个站点产物** —— 那是 263MB（42 个模型）：
+#   · models/          263MB   ← 模型的真实体积
+#   · models.json       20KB   ← 只是一个清单
+#   · index.html+assets  1.1MB ← 页面本体
+# 明明只改了一个 20KB 的清单，却要等几分钟，就是因为整站一起被重建。
+#
+# 现在把两者拆开：
+#   · master    ← 代码 + 模型 + models.json（体积大，改动才动它）
+#   · gh-pages  ← **只有页面壳**（index.html / assets/ / .nojekyll / models.json）
+#                 几百 KB，重新发布是一次秒级的「清空 + 拷贝 + 提交」
+# 模型和清单由页面从 master 的 raw/jsDelivr 读（见 app.js 的 RAW_BASE / CDN_BASE）。
+#
+# ⚠️ 因此：**加模型不用重跑这个工作流**。模型传进 master 后，页面下次刷新
+#    就能从 raw 读到新的 models.json —— gh-pages 一个字节都不用变。
+#    这个工作流只在「页面代码改了」时才需要跑。
+#
+# ⚠️ 为什么用「拷贝法」而不是 `git subtree split` / 第三方 pages action：
+#    页面壳只有 1.1MB、十几个文件，`rm -rf` + `cp -a` 是最直白、最不容易
+#    出错的做法，也不引任何第三方 action（跟仓库里另两个工作流保持一致）。
+#    拷贝时**显式列出**要哪些，而不是排除 models/ —— 后者一旦漏写一个
+#    `!` 就会把 263MB 一起发出去，而这里多写一个文件名最多是页面少个资源。
+
+on:
+  push:
+    branches: [master]
+    # 只有**页面本体**变了才重发。模型、清单、文档、工作流自身都不触发。
+    # ⚠️ 这份列表必须和下面「拷贝」步骤里的清单**同步维护** ——
+    #    加了一个页面资源（比如 assets/js/xxx.js）就得两边都加，
+    #    否则改了代码却不触发发布（静默失效，最难查）。
+    #    models.json 故意**不**在这里 —— 它变 = 有模型增删，页面壳不需要跟着变。
+    paths:
+      - 'index.html'
+      - 'assets/**'
+      - '.nojekyll'
+      # 这个工作流自己改了也重跑一次，好让改动立刻生效
+      - '.github/workflows/pages.yml'
+  # 手动触发：仓库 Actions → 左侧「发布页面到 gh-pages」→ Run workflow（分支选 master）。
+  # 工作流是幂等的（每轮重建产物 + orphan 强推），跑几次结果都一样，随时可以点一下重发。
+  workflow_dispatch:
+
+permissions:
+  contents: write               # 要往 gh-pages 分支推东西
+  pages: write                  # 下面「请求 Pages 构建」那步需要
+
+# Pages 发布不要并发：两次同时推 gh-pages 会互相覆盖
+concurrency:
+  group: live2d-v3-pages
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # ── 只检出「页面壳」那几样东西 ────────────────────────────────
+      # ⚠️⚠️ 必须用 sparse-checkout：这个仓库 master 上是 263MB 模型 +
+      #    190MB 历史，而本工作流**只需要 1.1MB**（index.html / assets /
+      #    .nojekyll / models.json）。不限制的话 checkout 会把 500MB 全拉下来 ——
+      #    一个「发页面」的活儿为此等上几十秒，纯属白费。
+      # ⚠️ fetch-depth: 1 同理：构建页面壳不需要任何历史（gh-pages 是 orphan 提交，
+      #    跟 master 历史无关）。
+      # ⚠️ sparse-checkout-cone-mode: false 才能用「具体文件」当模式
+      #    （cone 模式只认目录）；此时模式是 gitignore 风格，要写前导 `/` 锚到根。
+      # ⚠️ 这份清单要和下面「组装」步骤里的拷贝清单**同步维护** ——
+      #    这里少写一个，下面 cp 就会因为文件不存在而失败（好在是硬失败，不会静默）。
+      - name: 检出（只取页面壳）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          sparse-checkout: |
+            /index.html
+            /assets/
+            /.nojekyll
+            /models.json
+          sparse-checkout-cone-mode: false
+
+      # ── 组装页面壳 ────────────────────────────────────────────────
+      # 拷到一个独立目录，再把「这个目录」的内容推到 gh-pages。
+      # 用独立目录而不是就地删东西：master 的其它文件（models/ 那 263MB、
+      # tmp/、README…）一个都不受影响，也不会误删。
+      - name: 组装页面产物
+        run: |
+          set -euo pipefail
+
+          # ⚠️ 先确认 sparse-checkout 真的把这几样取下来了。
+          #    模式写错的话（比如漏了前导 `/`）文件会静默缺失，
+          #    然后下面 cp 报一句难懂的「cannot stat」—— 这里给个明确的原因。
+          missing=""
+          for f in index.html assets .nojekyll models.json; do
+            [ -e "$f" ] || missing="$missing $f"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::sparse-checkout 没取到：${missing} —— 检查上面 sparse-checkout 的模式（要前导 /，文件要用 cone-mode:false）"
+            exit 1
+          fi
+
+          out="$RUNNER_TEMP/site"
+          rm -rf "$out"
+          mkdir -p "$out"
+
+          # ── 页面本体（改这里就要同步改上面 paths:）──
+          cp -a index.html "$out/"
+          cp -a assets "$out/"
+          cp -a .nojekyll "$out/"
+
+          # ── models.json 是页面壳的**兜底副本** ──
+          # 页面优先从 master 的 raw/CDN 读它；这份同源副本只在
+          # 「外部源都连不上」或「本机静态服务直接跑 gh-pages 产物」时兜底。
+          # 它只有 20KB，带上不心疼，且能让「本机起服务验页面壳」这条路走得通。
+          cp -a models.json "$out/"
+
+          echo "=== 产物清单 ==="
+          du -sh "$out"
+          find "$out" -maxdepth 2 | sort
+          echo
+          # ⚠️ 兜底闸门：万一哪天拷错了东西，体积会立刻暴露出来。
+          #    页面壳就该是 1~2MB 量级；超过 20MB 说明混进了模型。
+          size_kb=$(du -sk "$out" | cut -f1)
+          if [ "$size_kb" -gt 20480 ]; then
+            echo "::error::页面产物 ${size_kb}KB，远超预期（应有 1~2MB）—— 多半把 models/ 拷进来了"
+            exit 1
+          fi
+          echo "产物 ${size_kb}KB，体积正常"
+
+      # ── 推到 gh-pages ────────────────────────────────────────────
+      # 用「orphan 提交」而不是 `git subtree push`：
+      # gh-pages 只装构建产物，跟 master 的历史**毫无关系**（不需要能追到
+      # 任何 master 提交），用一条干净的、无 parent 的提交最省事。
+      # 每轮都强推（--force）覆盖上一次 —— 产物是完整重建的，累积历史没意义，
+      # 而且仓库体积不会因为反复发布而膨胀。
+      - name: 推送到 gh-pages
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/site"
+
+          cd "$out"
+          git init -q -b gh-pages
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Deploy page shell from ${GITHUB_SHA::7}"
+
+          # ⚠️ 用 GITHUB_TOKEN 的 https 形式推；checkout 默认把 origin 的
+          #    凭据留在配置里，但这里是在**新初始化的仓库**里操作，
+          #    所以显式带上 token，别指望它继承。
+          git push --force \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" \
+            gh-pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 让 GitHub Pages 立刻重建 ──────────────────────────────────
+      # 有些仓库设置下，往发布分支推完 GitHub 会自己探测到；
+      # 但显式请求一次构建更稳，也不依赖「Settings → Pages」里的具体配置。
+      - name: 请求 Pages 构建
+        continue-on-error: true      # 没开 Pages API 权限时不至于让整个 run 变红
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api -X POST "repos/${GITHUB_REPOSITORY}/pages/builds" || true
+
+      - name: 汇总
+        run: |
+          {
+            echo "### 页面已发布到 \`gh-pages\`（run ${{ github.run_id }}）"
+            echo
+            echo "- 触发来源提交：\`${{ github.sha }}\`"
+            echo "- 产物只含页面壳（index.html / assets / .nojekyll / models.json）"
+            echo "- 模型与清单由页面从 \`master\` 的 raw / jsDelivr 读取，**不在**这个分支里"
+            echo
+            echo "> 加模型 / 改 models.json **不需要**重跑本工作流。"
+          } >> "$GITHUB_STEP_SUMMARY"
