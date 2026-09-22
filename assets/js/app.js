@@ -17,10 +17,11 @@
   // 本地开发（http://localhost）时模型就在旁边，继续走相对路径，免得白绕一圈网络。
   //
   // 两个源都配、可切换（rain 拍板）：
-  //   · raw   —— raw.githubusercontent.com，GitHub 官方，无需第三方；有限速，
-  //              国内直连可能不稳
   //   · cdn   —— jsDelivr，全球 CDN、国内快、不限速；第三方服务，仓库更新后
-  //              有分钟级缓存延迟
+  //              有分钟级缓存延迟（分支引用 `@master` 尤其明显）
+  //   · raw   —— raw.githubusercontent.com，GitHub 官方，无需第三方；有限速（429），
+  //              国内直连可能不稳
+  // **默认 cdn 主、raw 备**（2026-09-22 rain 要求，理由见 buildBaseCandidates）。
   // 主源失败自动切备源（见 fetchWithFallback）。用 ?src=raw|cdn 可强制指定，
   // 方便出问题时排查到底是谁不灵。
   //
@@ -63,9 +64,14 @@
   // 解析出本次要用的基址候选表（主→备）。返回空数组 = 本机相对模式。
   //
   // ⚠️ 顺序是「源在外层、分支在内层」：命中 master 时零浪费（第一个就中）；而
-  //    raw 被限速时紧接着试的是 raw@main 而不是 jsDelivr，于是「探明分支」的那次
-  //    成功一定落在**第一个源**上，收窄后的候选表天然就是 [raw, cdn] 两项。
-  //    反过来排（分支在外层）会让 raw 限速时那唯一一次重试撞到 cdn@master 的 404。
+  //    主源不可用时紧接着试的是同源的 main 分支而不是另一个源，于是「探明分支」
+  //    的那次成功一定落在**第一个源**上，收窄后的候选表天然就是 [主, 备] 两项。
+  //    反过来排（分支在外层）会让主源挂掉时那唯一一次重试撞到备源@master 的 404。
+  //
+  // ⚠️ 默认「cdn 主、raw 备」（2026-09-22 rain 要求）：raw.githubusercontent.com
+  //    国内访问慢且会限速（429），jsDelivr 有全国节点。代价是 jsDelivr 对分支引用
+  //    有缓存（`@master` 这种能缓存数小时~7天）→ 刚推的模型可能要多等一会儿才出现。
+  //    用 `?src=raw` 可强制回 raw。
   function buildBaseCandidates() {
     if (isLocalHost()) return [];
     var q = '';
@@ -80,7 +86,7 @@
       });
     }
     if (S_forcedSrc) { add(S_forcedSrc); return out; }
-    add('raw'); add('cdn');       // 默认 raw 主、jsDelivr 备
+    add('cdn'); add('raw');       // 默认 cdn 主、raw 备
     return out;
   }
 
@@ -403,9 +409,9 @@
   //
   // ⚠️ 为什么需要它：上面的 `fetchWithFallback` 只在**读 models.json 时**探源 ——
   //    一个文件探不出「源半死」：raw.githubusercontent.com 在批量请求下会限速（429），
-  //    完全可能「models.json（20KB，一个请求）取得到，而模型的几十个文件全 429」。
-  //    实测（探针 F 组）：这种情况下列表能列出来 42 个模型，但**每一个都载入失败**，
-  //    而且永远死钉在 raw 上、不会自己去用 jsDelivr —— 页面看着像坏了。
+  //    jsDelivr 也可能整段抽风，完全可能「models.json（20KB，一个请求）取得到，
+  //    而模型的几十个文件全取不到」。实测（探针 F 组）：这种情况下列表能列出来全部模型，
+  //    但**每一个都载入失败**，而且永远死钉在当前源上、不会自己去用另一个源 —— 页面看着像坏了。
   //    所以模型资源失败时要能再切一次。
   function advanceModelsBase() {
     if (!S_baseCandidates.length) return false;        // 本机同源模式，没别的可切
@@ -421,14 +427,14 @@
   // 分支探明之后，把候选表收窄成「同一分支的两个源」。
   //
   // ⚠️⚠️ 为什么必须收窄：switchModel 载入失败时，每个模型**只给一次**换源重试
-  //    （m._srcRetried 守卫）。若候选表一直留着 4 项，raw 被限速时那唯一一次重试
-  //    会撞到 raw@main —— 同样是 raw、同样被限速 —— 于是直接放弃，反而比改造前
-  //    更差（那时下一项就是 jsDelivr）。收窄之后「重试一次 = 换一个源」，
+  //    （m._srcRetried 守卫）。若候选表一直留着 4 项，主源挂掉时那唯一一次重试
+  //    会撞到同源的 main 分支 —— 同样不可用 —— 于是直接放弃，反而比改造前
+  //    更差（那时下一项就是另一个源）。收窄之后「重试一次 = 换一个源」，
   //    语义与改造前完全一致。
   function pinBranch(base) {
     var br = S_branchByBase[base];
     if (!br) return;
-    var srcs = S_forcedSrc ? [S_forcedSrc] : ['raw', 'cdn'];
+    var srcs = S_forcedSrc ? [S_forcedSrc] : ['cdn', 'raw'];
     S_baseCandidates = srcs.map(function (s) {
       return (s === 'cdn') ? cdnBaseOf(br) : rawBaseOf(br);
     });
@@ -924,7 +930,7 @@
       drainPendingModel();
     }).catch(function (e) {
       S.busyModel = false;
-      // 主源「半死」：清单取到了、模型资源取不到（raw 限速的典型症状）。
+      // 当前源「半死」：清单取到了、模型资源取不到（限速 / CDN 抽风的典型症状）。
       // 读清单那一步的探源发现不了这种情况，所以这里再给一次机会 ——
       // 切到备用源，把整次载入重来。每个模型只重试一次，不会来回打转。
       // ⚠️ 必须在 `S.busyModel = false` **之后**再调 switchModel：
@@ -1605,7 +1611,7 @@
   function saveExtSrcPref(url, src) {
     try {
       if (!url) localStorage.removeItem(EXTSRC_KEY);   // 用户清空了输入框 = 主动忘掉
-      else localStorage.setItem(EXTSRC_KEY, JSON.stringify({ url: url, src: src || 'raw' }));
+      else localStorage.setItem(EXTSRC_KEY, JSON.stringify({ url: url, src: src || 'cdn' }));
     } catch (e) { /* 隐私模式下写不进去，忽略 */ }
   }
   // 把输入框当前的内容记下来（对话框关闭 / 输入变化 / 添加成功时都调一次）
@@ -1684,9 +1690,9 @@
     }
   }
   function pickedSrcKind() {
-    if (!els.srcSeg) return 'raw';
+    if (!els.srcSeg) return 'cdn';
     var opt = els.srcSeg.querySelector('.src-seg-opt.on');
-    return opt ? opt.getAttribute('data-src') : 'raw';
+    return opt ? opt.getAttribute('data-src') : 'cdn';
   }
   function rebuildBase(owner, repo, branch, source) {
     return source === 'cdn'
@@ -3662,8 +3668,8 @@
           persistSrcUrl();
         });
       });
-      // 默认 raw
-      if (!els.srcSeg.querySelector('.src-seg-opt.on')) applySrcKind('raw');
+      // 默认 cdn（jsDelivr）
+      if (!els.srcSeg.querySelector('.src-seg-opt.on')) applySrcKind('cdn');
     }
 
     // 「读取并添加」
