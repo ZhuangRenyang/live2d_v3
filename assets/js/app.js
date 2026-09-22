@@ -16,14 +16,15 @@
   // 代价：页面在 gh-pages 上，模型在 master 上，必须走**绝对地址**（跨分支）。
   // 本地开发（http://localhost）时模型就在旁边，继续走相对路径，免得白绕一圈网络。
   //
-  // 两个源都配、可切换（rain 拍板）：
-  //   · cdn   —— jsDelivr，全球 CDN、国内快、不限速；第三方服务，仓库更新后
-  //              有分钟级缓存延迟（分支引用 `@master` 尤其明显）
-  //   · raw   —— raw.githubusercontent.com，GitHub 官方，无需第三方；有限速（429），
-  //              国内直连可能不稳
-  // **默认 cdn 主、raw 备**（2026-09-22 rain 要求，理由见 buildBaseCandidates）。
-  // 主源失败自动切备源（见 fetchWithFallback）。用 ?src=raw|cdn 可强制指定，
-  // 方便出问题时排查到底是谁不灵。
+  // 源策略（2026-09-23 rain 拍板，**不用 jsDelivr 了**）：
+  //   · 默认 —— raw.githubusercontent.com，GitHub 官方原始地址
+  //   · 兜底 —— 一个「加速地址」。所谓加速地址是个**前缀代理**：
+  //               加速地址 + 原始 GitHub 绝对地址
+  //             例：https://gh-proxy.org/https://raw.githubusercontent.com/o/r/master/x
+  //             （ghproxy 系站点的通行形态；用户自己再拼一层路径，所以这里只做前缀拼接）
+  //
+  // ⚠️ 不再有「raw / cdn 二选一」的语义。列表里显示的是「GitHub 原始地址」或
+  //    该加速站的域名，区分靠 S_baseName（'github' / 'accel' / 'local'）。
   //
   // ⚠️ 改仓库名 / 用户名只改下面两行。
   var REPO_OWNER = 'weiraing';
@@ -31,34 +32,106 @@
 
   // 默认分支候选：GitHub 新建仓库默认 main，老仓库多是 master。**两个都试一遍**，
   // 谁先取到 models.json 就用谁 —— 不必让人先自己去确认「这个仓库的分支叫啥」。
-  // 探明之后候选表会收窄成「同一分支的两个源」（见 pinBranch），所以
-  // 「主源半死时切备用源」的语义与以前只认 master 时完全一致。
+  // 探明之后候选表会收窄成「同一分支的原始地址 + 加速地址」（见 pinBranch）。
   var BRANCHES = ['master', 'main'];
 
   function rawBaseOf(branch) {
     return 'https://raw.githubusercontent.com/' + REPO_OWNER + '/' + REPO_NAME + '/' + branch + '/';
   }
-  function cdnBaseOf(branch) {
-    return 'https://cdn.jsdelivr.net/gh/' + REPO_OWNER + '/' + REPO_NAME + '@' + branch + '/';
+
+  // ---------- 加速地址（前缀代理） ----------
+  //
+  // ⚠️⚠️ 加速地址是**前缀**，不是替换域名：
+  //        https://<加速站>/https://raw.githubusercontent.com/<owner>/<repo>/<branch>/<path>
+  //    所以「拼一个加速后的地址」就是把两个绝对地址直接粘起来 —— 不需要解析加速站自己的
+  //    路径规则（各家不一样，猜错就 404）。代价是地址变长，但这是唯一能通吃的做法。
+  //
+  // ⚠️ 规范化时**必须保留协议**（https:// 不能省）：站点收到的就是一条完整 URL，
+  //    省掉协议它不知道往哪转发。这点与「替换域名型」代理正好相反。
+  function normalizeAccelBase(input) {
+    var s = String(input == null ? '' : input).trim();
+    if (!s) return '';
+    if (!/^https?:\/\//i.test(s)) s = 'https://' + s;   // 只写了域名时补协议，别让用户被这点小事卡住
+    try {
+      var u = new URL(s);
+      if (!u.hostname) return '';
+      // 只留协议 + 主机（丢查询串/锚点；路径保留，有的加速站部署在子路径下）
+      var path = u.pathname.replace(/\/+$/, '');       // 尾部多余斜杠去掉，拼接时统一补一个
+      return u.protocol + '//' + u.host + path + '/';
+    } catch (e) { return ''; }
   }
+
+  // 加速地址 → 域名（列表标签、预览用）。取不出来就回退原文。
+  function accelLabel(base) {
+    var n = normalizeAccelBase(base);
+    if (!n) return '';
+    try { return new URL(n).hostname; } catch (e) { return n; }
+  }
+
+  // 把一份「原始 GitHub 绝对地址」套上加速前缀
+  function accelerate(rawUrl, accelBase) {
+    var a = normalizeAccelBase(accelBase);
+    if (!a) return rawUrl;
+    return a + rawUrl;
+  }
+
+  // 内置常用加速站（都是「前缀代理」形态，rain 2026-09-23 给的清单）。
+  // ⚠️ 这些是**第三方公益服务**，随时可能停服 / 改规则 / 限速 —— 所以：
+  //    · 列表里带 site 字段落进 localStorage 时只存**地址**，不存「站点可用」这个结论；
+  //    · 每次真请求失败都能让用户换一个（见弹窗里的下拉）；
+  //    · 新增站点只改这个数组，别把判断散到别的函数里。
+  var ACCEL_PRESETS = [
+    { label: 'gh-proxy.org',           base: 'https://gh-proxy.org/' },
+    { label: 'ghproxy.net',            base: 'https://ghproxy.net/' },
+    { label: 'github.dpik.top',        base: 'https://github.dpik.top/' },
+    { label: 'gh.dpik.top',            base: 'https://gh.dpik.top/' },
+    { label: 'ghfile.geekertao.top',   base: 'https://ghfile.geekertao.top/' },
+    { label: 'github.tbap.top',        base: 'https://github.tbap.top/' },
+    { label: 'ghf.无名氏.top',          base: 'https://ghf.无名氏.top/' },
+    { label: 'gh.927223.xyz',          base: 'https://gh.927223.xyz/' }
+  ];
 
   // 当前生效的模型基址（末尾一定带 '/'；本机相对模式时是空串）
   var S_modelsBase = '';
-  // 外部基址的候选顺序（主 → 备）。探测阶段含两个分支，探明后只剩同一分支的两个源。
+  // 外部基址的候选顺序（主 → 备）。探测阶段含两个分支，探明后只剩同一分支的两项。
   var S_baseCandidates = [];
   // ?src= 强制指定的源（'' = 不强制）。收窄候选表时要照它来。
+  //   'github' —— 只用原始地址
+  //   'accel'  —— 只用加速地址
   var S_forcedSrc = '';
+  // 加速模式时，兜底用哪个加速地址（空 = 不兜底）。由偏好里「上次选的那个」决定。
+  // ⚠️ 启动时会用 initAccelBase() 落一个默认值（内置第一个 / 上次选的），
+  //    **不能留着空串** —— 空串的话候选表里根本没有加速项，
+  //    「raw 拉不到 → 自动切加速」的兜底就是一句空话（探针 B/F 组的靶子）。
+  var S_accelBase = '';
   // base 串 → 分支名。候选表都是这里拼的，留个映射比事后用正则从 URL 里抠分支可靠
   // （分支名本身可能带 '.' / '-'，正则容易误伤）。
   var S_branchByBase = {};
 
   // 是不是「页面与模型分离」的部署形态：
   //   · 本机 localhost / 127.0.0.1 / file:// → 否，走相对路径（模型就在页面旁边）
-  //   · 其余（GitHub Pages、自定义域名）→ 是，走 raw / jsDelivr 两个绝对基址
+  //   · 其余（GitHub Pages、自定义域名）→ 是，走 raw / 加速 两个绝对基址
   // 用「同源探测」比猜域名可靠：本地起 http.server 时，models/ 就在同目录下。
   function isLocalHost() {
     var h = location.hostname;
     return !h || h === 'localhost' || h === '127.0.0.1' || h === '[::1]' || h === '::1';
+  }
+
+  // 决定「兜底用哪个加速地址」。
+  //   · ?src=accel&accel=<地址> 显式指定 → 用它（便于分享一条固定走某加速站的链接）
+  //   · 否则用**上次在弹窗里选过的那个**（localStorage）
+  //   · 都没选过 → 内置清单第一个
+  // ⚠️ 只影响「兜底」—— 主源永远是 GitHub 原始地址（除非 ?src=accel 强制）。
+  //    所以这里读到什么，都不会让页面默认去走第三方。
+  function initAccelBase() {
+    var forced = '';
+    try { forced = new URLSearchParams(location.search).get('accel') || ''; } catch (e) {}
+    var pref = loadExtSrcPref();
+    var pick = forced || pref.accel || pref.customAccel || '';
+    var n = normalizeAccelBase(pick);
+    if (!n) n = normalizeAccelBase(ACCEL_PRESETS[0] && ACCEL_PRESETS[0].base);
+    S_accelBase = n || '';
+    return S_accelBase;
   }
 
   // 解析出本次要用的基址候选表（主→备）。返回空数组 = 本机相对模式。
@@ -68,25 +141,41 @@
   //    的那次成功一定落在**第一个源**上，收窄后的候选表天然就是 [主, 备] 两项。
   //    反过来排（分支在外层）会让主源挂掉时那唯一一次重试撞到备源@master 的 404。
   //
-  // ⚠️ 默认「cdn 主、raw 备」（2026-09-22 rain 要求）：raw.githubusercontent.com
-  //    国内访问慢且会限速（429），jsDelivr 有全国节点。代价是 jsDelivr 对分支引用
-  //    有缓存（`@master` 这种能缓存数小时~7天）→ 刚推的模型可能要多等一会儿才出现。
-  //    用 `?src=raw` 可强制回 raw。
+  // ⚠️ 默认「GitHub 原始地址主、加速地址备」（2026-09-23 rain 要求）：
+  //    raw 是国内访问的老大难（慢 + 批量请求 429），所以给一个加速兜底；
+  //    但**默认不主动用第三方**，只有 raw 真拉不到时才切过去。
+  //    加速站由使用者自己在下拉里选（存 localStorage），没选过就直接用内置第一个。
   function buildBaseCandidates() {
     if (isLocalHost()) return [];
+    initAccelBase();
     var q = '';
     try { q = (new URLSearchParams(location.search).get('src') || '').toLowerCase(); } catch (e) {}
-    S_forcedSrc = (q === 'raw' || q === 'cdn') ? q : '';
+    // 兼容老写法：?src=raw 等同 github，?src=cdn 在 jsDelivr 下线后无意义 → 当作默认
+    if (q === 'raw' || q === 'github') S_forcedSrc = 'github';
+    else if (q === 'accel' || q === 'cdn') S_forcedSrc = 'accel';
+    else S_forcedSrc = '';
+
     var out = [];
-    function add(src) {
+    function addRaw() {
       BRANCHES.forEach(function (b) {
-        var base = (src === 'cdn') ? cdnBaseOf(b) : rawBaseOf(b);
+        var base = rawBaseOf(b);
         S_branchByBase[base] = b;
         out.push(base);
       });
     }
-    if (S_forcedSrc) { add(S_forcedSrc); return out; }
-    add('cdn'); add('raw');       // 默认 cdn 主、raw 备
+    function addAccel() {
+      if (!S_accelBase) return;
+      BRANCHES.forEach(function (b) {
+        var raw = rawBaseOf(b);
+        var base = accelerate(raw, S_accelBase);
+        S_branchByBase[base] = b;
+        out.push(base);
+      });
+    }
+
+    if (S_forcedSrc === 'github') { addRaw(); return out; }
+    if (S_forcedSrc === 'accel') { addAccel(); return out; }
+    addRaw(); addAccel();          // 默认 github 主、加速备
     return out;
   }
 
@@ -199,7 +288,9 @@
     srcMask:         document.getElementById('srcMask'),
     srcClose:        document.getElementById('btnSrcClose'),
     srcUrl:          document.getElementById('srcUrl'),
-    srcSeg:          document.getElementById('srcSeg'),
+    srcKind:         document.getElementById('srcKind'),
+    srcAccelRow:     document.getElementById('srcAccelRow'),
+    srcAccelInput:   document.getElementById('srcAccelInput'),
     srcRepo:         document.getElementById('srcRepo'),
     srcBranch:       document.getElementById('srcBranch'),
     srcEffective:    document.getElementById('srcEffective'),
@@ -392,9 +483,13 @@
     return attempt(0);
   }
 
+  // 给一个基址起个「来源名」—— 只用来显示与断言，不参与任何判定逻辑。
+  //   local  —— 本机同源（相对路径）
+  //   github —— 原始地址（raw.githubusercontent.com 开头）
+  //   accel  —— 加速地址（其它一切，因为加速站是用户自填的，认不出「是哪家」）
   function baseName(base) {
     if (!base) return 'local';
-    return /jsdelivr/i.test(base) ? 'cdn' : 'raw';
+    return /^https?:\/\/raw\.githubusercontent\.com\//i.test(base) ? 'github' : 'accel';
   }
   var S_baseName = 'local';
 
@@ -409,7 +504,7 @@
   //
   // ⚠️ 为什么需要它：上面的 `fetchWithFallback` 只在**读 models.json 时**探源 ——
   //    一个文件探不出「源半死」：raw.githubusercontent.com 在批量请求下会限速（429），
-  //    jsDelivr 也可能整段抽风，完全可能「models.json（20KB，一个请求）取得到，
+  //    加速站也可能整段抽风，完全可能「models.json（20KB，一个请求）取得到，
   //    而模型的几十个文件全取不到」。实测（探针 F 组）：这种情况下列表能列出来全部模型，
   //    但**每一个都载入失败**，而且永远死钉在当前源上、不会自己去用另一个源 —— 页面看着像坏了。
   //    所以模型资源失败时要能再切一次。
@@ -424,7 +519,7 @@
     return true;
   }
 
-  // 分支探明之后，把候选表收窄成「同一分支的两个源」。
+  // 分支探明之后，把候选表收窄成「同一分支的原始地址 + 加速地址」。
   //
   // ⚠️⚠️ 为什么必须收窄：switchModel 载入失败时，每个模型**只给一次**换源重试
   //    （m._srcRetried 守卫）。若候选表一直留着 4 项，主源挂掉时那唯一一次重试
@@ -434,10 +529,18 @@
   function pinBranch(base) {
     var br = S_branchByBase[base];
     if (!br) return;
-    var srcs = S_forcedSrc ? [S_forcedSrc] : ['cdn', 'raw'];
-    S_baseCandidates = srcs.map(function (s) {
-      return (s === 'cdn') ? cdnBaseOf(br) : rawBaseOf(br);
-    });
+    var raw = rawBaseOf(br);
+    if (S_forcedSrc === 'github') { S_baseCandidates = [raw]; return; }
+    if (S_forcedSrc === 'accel') {
+      var only = accelerate(raw, S_accelBase);
+      S_baseCandidates = [only];
+      return;
+    }
+    var acc = S_accelBase ? [accelerate(raw, S_accelBase)] : [];
+    // 主源到底是哪个：刚成功的那次若落在加速地址上（说明 raw 先失败了），
+    // 收窄后要让加速地址排前面，否则下一次 advanceModelsBase 会又切回挂掉的 raw。
+    var accelFirst = !!S_accelBase && /^https?:\/\/raw\.githubusercontent\.com\//i.test(base) === false;
+    S_baseCandidates = accelFirst ? acc.concat([raw]) : [raw].concat(acc);
   }
 
   // 从 GitHub Pages / 自定义域名里推断出 用户名/仓库名
@@ -611,10 +714,10 @@
     // 顺序已经由 visibleModels() 定好（组名升序、顶层最后），这里只管画
     var matched = visibleModels();
 
-    // 来源标注：清单从哪来 + 模型从哪个源取（raw / jsDelivr / 本机）。
+    // 来源标注：清单从哪来 + 模型从哪个源取（GitHub 原始 / 加速地址 / 本机）。
     // 分离部署后「模型来自外部 CDN」是件用户该看得见的事 —— 出问题时一眼知道该查谁。
     var srcLabel = { index: 'models.json', fallback: '内置清单' }[S.source] || '';
-    var baseTag = { raw: 'raw', cdn: 'jsDelivr', local: '' }[S_baseName] || '';
+    var baseTag = { github: 'GitHub', accel: '加速', local: '' }[S_baseName] || '';
     var tag = [srcLabel, baseTag].filter(Boolean).join(' · ');
     els.modelCount.textContent = kw
       ? matched.length + ' / ' + S.models.length + ' 个'
@@ -666,13 +769,15 @@
     el.title = m.path + '/' + m.file;
     el.addEventListener('click', function () { switchModel(m); });
 
-    // 外部源模型：右侧加一个「raw / jsDelivr」小标签，让用户一眼看出这是别的仓库的
+    // 外部源模型：右侧加一个「GitHub / 加速」小标签，让用户一眼看出这是别的仓库的
     if (m._external) {
       var tag = document.createElement('div');
       tag.className = 'ext-tag';
-      tag.textContent = m._external.source === 'cdn' ? 'jsDelivr' : 'raw';
+      tag.textContent = m._external.source === 'accel' ? '加速' : 'GitHub';
       tag.title = m._external.owner + ' / ' + m._external.repo + '@' + m._external.branch +
-                  '\n来源：' + (m._external.source === 'cdn' ? 'cdn.jsdelivr.net' : 'raw.githubusercontent.com');
+                  '\n来源：' + (m._external.source === 'accel'
+                    ? (accelLabel(m._external.accel) + '（加速）')
+                    : 'raw.githubusercontent.com');
       el.appendChild(tag);
     }
 
@@ -882,7 +987,7 @@
     // 外部模型（m._external）走自己的 base（owner 的仓库在另一个分支上），
     // 不能再吃全局 S_modelsBase —— 不然 owner 仓库的模型会跑到这个 fetch 里去找。
     // ⚠️ 非本地 / 非外部模型走 modelsUrl() —— 它会在「页面与模型分离」的部署形态下
-    //    补上 raw/jsDelivr 的绝对前缀（模型在 master，页面在 gh-pages）。
+    //    补上 raw / 加速地址的绝对前缀（模型在 master，页面在 gh-pages）。
     var local = m._local || null;
     var external = m._external || null;
     var baseUrl = local ? ''
@@ -935,7 +1040,7 @@
       // 切到备用源，把整次载入重来。每个模型只重试一次，不会来回打转。
       // ⚠️ 必须在 `S.busyModel = false` **之后**再调 switchModel：
       //    它开头有 busyModel 守卫，还在忙的话这次重试会被丢进 pending。
-      // ⚠️ 外部模型的「备用源」切的是它自己的（raw↔cdn），不动全局 S_modelsBase ——
+      // ⚠️ 外部模型的「备用源」切的是它自己的（github ↔ accel），不动全局 S_modelsBase ——
       //    一个外部仓库挂了不能把整个页面的源切走，否则本仓库的模型跟着受害。
       if (!m._local && !m._srcRetried) {
         if (m._external) {
@@ -945,6 +1050,7 @@
             // 把 _external 改成备用源，但 key / owner 不变（同一组外部模型）
             m._external.base = alt.base;
             m._external.source = alt.source;
+            m._external.accel = alt.accel || '';
             m._external.url = alt.url;
             switchModel(m);
             return;
@@ -1402,67 +1508,114 @@
   //   · 解析失败要弹错对话框，**不动 S.models** —— 一个无效 URL 不能让现有列表炸掉。
   //   · 外部模型条目要打 `_external` 标记、`key` 用 'ext:<owner>:' 前缀，避免与本仓库的
   //     key 撞；switchModel 看到 `_external` 时改走自己的 base，不再吃全局 S_modelsBase。
-  //   · catch 里的「源半死自救」要按外部模型自己的源（raw↔cdn）切，不能动全局 S_modelsBase
-  //     —— 否则一个外部仓库挂了、把整个页面的源切走了，本仓库的模型也跟着受害。
+  //   · catch 里的「源半死自救」要按外部模型自己的源切（原始地址 ↔ 加速地址），
+  //     不能动全局 S_modelsBase —— 否则一个外部仓库挂了、把整个页面的源切走了，
+  //     本仓库的模型也跟着受害。
   //   · 重复加同 owner：旧的全部撤掉，新的顶上。owner 是分组的唯一标识，必须收敛。
   //   · 当前模型若在被移除的 owner 里，要切回本仓库的 S.models[0]，不能让它指向已删除的条目。
+  //
+  // ⚠️⚠️ 2026-09-23 起**不再支持 jsDelivr**（rain 要求下线）。能认的形态只剩两种：
+  //   · GitHub 原始地址：https://raw.githubusercontent.com/<owner>/<repo>/refs/heads/<branch>/models.json
+  //   · 加速地址（前缀代理）：<加速地址> + 上面那条原始地址
+  //     例：https://gh-proxy.org/https://raw.githubusercontent.com/o/r/refs/heads/master/models.json
+  //   于是「从一条加速 URL 里反解出 owner/repo/branch」的做法是：
+  //   **先试着剥掉任一个已知加速前缀（内置清单 + 用户自加的），再去按原始地址的规则解析**。
   function parseExternalUrl(input) {
     var s = String(input || '').trim();
     if (!s) throw new Error('请填入一个 models.json 链接');
+
+    // ① 如果带着加速前缀，先剥掉它，把它记进 accel；剩下一段按原始地址解析。
+    //    ⚠️ 前缀要「贪心匹配最长的那个」：万一某加速站地址本身是另一个的前缀
+    //       （例如 a.com 与 a.com/gh），短的先命中就会剥出一个非法 URL。
+    //    ⚠️ 三处宽容：用户可能只写域名（不带协议）、漏了末尾斜杠、大小写混着写。
+    //       这里按「归一化后的候选」逐条比对，而不是拿原串做死板的 startsWith。
+    var accel = '';
+    var rest = s;
+    var lowS = s.toLowerCase();
+    var known = knownAccelBases().slice().sort(function (a, b) { return b.length - a.length; });
+    for (var i = 0; i < known.length; i++) {
+      var k = known[i];                          // 已归一化：带协议、末尾带 /
+      var variants = [k, k.replace(/\/$/, ''), k.replace(/^https?:\/\//, ''), k.replace(/^https?:\/\//, '').replace(/\/$/, '')];
+      for (var j = 0; j < variants.length; j++) {
+        var v = variants[j];
+        if (!v || lowS.length <= v.length) continue;
+        if (lowS.slice(0, v.length) === v) { accel = k; rest = s.slice(v.length); break; }
+      }
+      if (accel) break;
+    }
+    // 剥完可能剩下「/ https://raw...」带个多余斜杠（用户写了 `.../` 或我们只剥了域名）。
+    rest = rest.replace(/^\/+/, '');
+
     var u;
-    try { u = new URL(s); } catch (e) { throw new Error('链接不是合法 URL'); }
+    try { u = new URL(rest); } catch (e) { throw new Error('链接不是合法 URL：' + rest.slice(0, 60)); }
 
     var host = u.hostname.toLowerCase();
-    var owner, repo, branch, source, base;
-    if (host === 'raw.githubusercontent.com') {
-      // /<owner>/<repo>/refs/heads/<branch>/models.json → 过滤空段后长度 6
-      //   seg[0]=owner [1]=repo [2]=refs [3]=heads [4]=branch [5]=models.json
-      var seg = u.pathname.split('/').filter(Boolean);
-      if (seg.length < 6 || seg[2] !== 'refs' || seg[3] !== 'heads') {
-        throw new Error('raw 链接必须形如 .../<owner>/<repo>/refs/heads/<分支>/models.json');
+    if (host !== 'raw.githubusercontent.com') {
+      if (!accel) {
+        throw new Error('只支持 raw.githubusercontent.com 的 models.json 链接，'
+          + '或在「加速地址」里选一个加速站/自定义加速地址。识别到的是 ' + host);
       }
-      if (seg[5] !== 'models.json') {
-        throw new Error('链接末尾必须是 models.json（当前末尾是 ' + seg[5] + '）');
-      }
-      owner = seg[0]; repo = seg[1]; branch = seg[4];
-      source = 'raw';
-      base = 'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/';
-    } else if (host === 'cdn.jsdelivr.net' || host === 'www.jsdelivr.com') {
-      // /gh/<owner>/<repo>@<branch>/models.json → 过滤空段后长度 4
-      var seg2 = u.pathname.split('/').filter(Boolean);
-      if (seg2.length < 4 || seg2[0] !== 'gh' || seg2[2].indexOf('@') < 0) {
-        throw new Error('jsDelivr 链接必须形如 /gh/<owner>/<repo>@<分支>/models.json');
-      }
-      var at = seg2[2].indexOf('@');
-      owner = seg2[1];
-      repo = seg2[2].slice(0, at);
-      branch = seg2[2].slice(at + 1);
-      if (seg2[3] !== 'models.json') {
-        throw new Error('链接末尾必须是 models.json（当前末尾是 ' + seg2[3] + '）');
-      }
-      source = 'cdn';
-      base = 'https://cdn.jsdelivr.net/gh/' + owner + '/' + repo + '@' + branch + '/';
-    } else {
-      throw new Error('目前只支持 raw.githubusercontent.com 与 cdn.jsdelivr.net，识别到的是 ' + host);
+      throw new Error('加速地址后面要跟完整的 raw.githubusercontent.com 原始链接，收到的是 ' + host);
     }
+
+    // /<owner>/<repo>/refs/heads/<branch>/models.json → 过滤空段后长度 6
+    //   seg[0]=owner [1]=repo [2]=refs [3]=heads [4]=branch [5]=models.json
+    var seg = u.pathname.split('/').filter(Boolean);
+    if (seg.length < 6 || seg[2] !== 'refs' || seg[3] !== 'heads') {
+      throw new Error('raw 链接必须形如 .../<owner>/<repo>/refs/heads/<分支>/models.json');
+    }
+    if (seg[5] !== 'models.json') {
+      throw new Error('链接末尾必须是 models.json（当前末尾是 ' + seg[5] + '）');
+    }
+    var owner = seg[0], repo = seg[1], branch = seg[4];
     if (!owner || !repo || !branch) throw new Error('owner / repo / branch 至少有一个解析不出来');
-    return { owner: owner, repo: repo, branch: branch, source: source, base: base, url: s };
+
+    var rawBase = 'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/';
+    // source 只有两种：'github'（原始）/ 'accel'（套了加速前缀）
+    var source = accel ? 'accel' : 'github';
+    var base = accel ? accelerate(rawBase, accel) : rawBase;
+    return { owner: owner, repo: repo, branch: branch,
+             source: source, accel: accel, base: base, url: s };
   }
 
-  // 给某个外部源构造一份「另一镜像」的 base；找不到就返回 null。
-  // raw → cdn，cdn → raw。两者域名规范必须严格匹配 owner/repo/branch。
+  // 所有「已知的加速地址」：内置常用 + 用户自己加过的（存 localStorage）。
+  // 解析 URL 时靠它把前缀剥下来；下拉框也靠它出选项。
+  function knownAccelBases() {
+    var out = ACCEL_PRESETS.map(function (p) { return normalizeAccelBase(p.base); });
+    var pref = loadExtSrcPref();
+    if (pref && pref.customAccel) {
+      var c = normalizeAccelBase(pref.customAccel);
+      if (c) out.push(c);
+    }
+    // 去重（用户可能既从下拉选了、又手填了一样的）
+    var seen = {};
+    return out.filter(function (b) {
+      if (!b || seen[b]) return false;
+      seen[b] = 1;
+      return true;
+    });
+  }
+
+  // 给某个外部源换一个源形态，拿不到就返回 null。
+  //   github → accel：套上加速前缀（优先用该源自己的 accel，其次用当前的全局兜底）
+  //   accel  → github：把前缀拆掉
   function altBase(info) {
     if (!info) return null;
-    if (info.source === 'raw') {
+    if (info.source === 'github') {
+      var a = info.accel || S_accelBase || (ACCEL_PRESETS[0] && normalizeAccelBase(ACCEL_PRESETS[0].base));
+      if (!a) return null;
+      var rawBase = 'https://raw.githubusercontent.com/' + info.owner + '/' + info.repo + '/' + info.branch + '/';
       return {
-        owner: info.owner, repo: info.repo, branch: info.branch, source: 'cdn',
-        base: 'https://cdn.jsdelivr.net/gh/' + info.owner + '/' + info.repo + '@' + info.branch + '/',
-        url: 'https://cdn.jsdelivr.net/gh/' + info.owner + '/' + info.repo + '@' + info.branch + '/models.json'
+        owner: info.owner, repo: info.repo, branch: info.branch,
+        source: 'accel', accel: a,
+        base: accelerate(rawBase, a),
+        url: accelerate(rawBase + 'models.json', a)
       };
     }
-    if (info.source === 'cdn') {
+    if (info.source === 'accel') {
       return {
-        owner: info.owner, repo: info.repo, branch: info.branch, source: 'raw',
+        owner: info.owner, repo: info.repo, branch: info.branch,
+        source: 'github', accel: '',
         base: 'https://raw.githubusercontent.com/' + info.owner + '/' + info.repo + '/' + info.branch + '/',
         url: 'https://raw.githubusercontent.com/' + info.owner + '/' + info.repo + '/refs/heads/' + info.branch + '/models.json'
       };
@@ -1475,10 +1628,10 @@
   function fetchExternalModelsJson(info) {
     function attemptOnce(target) {
       // base 已经是「仓库根」末位带 /，拼 models.json 即可
-      //   raw   → https://raw.githubusercontent.com/<owner>/<repo>/<branch>/models.json
-      //   jsDelivr → https://cdn.jsdelivr.net/gh/<owner>/<repo>@<branch>/models.json
+      //   github → https://raw.githubusercontent.com/<owner>/<repo>/<branch>/models.json
+      //   accel  → <加速地址>https://raw.githubusercontent.com/<owner>/<repo>/<branch>/models.json
       // ⚠️ 不能用 target.url + 'models.json'：用户输入的 URL 路径结构不一样
-      //   （raw 要走 refs/heads 分支目录、jsDelivr 不走），base 是统一规范过的。
+      //   （原始地址要走 refs/heads 分支目录、加速前缀还套在外面），base 是统一规范过的。
       return fetch(target.base + 'models.json', { cache: 'no-cache' })
         .then(function (r) {
           if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -1522,7 +1675,8 @@
       if (!raw || !raw.file) return;     // 跳过空条目，graceful
       var m = decorate([raw])[0];         // 走正常 decorate 流程补 group/parts/key
       m._external = { owner: owner, repo: info.repo, branch: info.branch,
-                      source: info.source, base: info.base, url: info.url };
+                      source: info.source, accel: info.accel || '',
+                      base: info.base, url: info.url };
       m.key = 'ext:' + owner + ':' + m.path + '/' + m.file;
       // 拷贝信息到 decorate 漏掉的字段
       m.name = raw.name || m.name;
@@ -1533,6 +1687,10 @@
   }
 
   // 用户按「读取并添加」：fetch + 合进列表 + 重渲染 + 切到第一个新模型。
+  // 最近一次 addExternalSource 的「选源结论」快照。见函数里写入处的注释：
+  // 这个值**不能**靠事后读 S.models 里的 m._external 反推 —— switchModel 的失败重试会改写它。
+  var lastAddInfo = null;
+
   function addExternalSource(info, onDone) {
     if (S.busyModel) {
       toast('模型正在载入，等它完事再加外部源', { type: 'warn' });
@@ -1543,7 +1701,8 @@
     return fetchExternalModelsJson(info).then(function (res) {
       var used = res.info;
       var added = mergeExternalModels(used, res.rawList);
-      setSrcStatus('已加入 ' + added.length + ' 个模型（来自 ' + used.owner + '/' + used.repo + '，' + (used.source === 'cdn' ? 'jsDelivr' : 'raw') + '）', '');
+      setSrcStatus('已加入 ' + added.length + ' 个模型（来自 ' + used.owner + '/' + used.repo + '，' +
+        (used.source === 'accel' ? accelLabel(used.accel) + ' 加速' : 'GitHub 原始地址') + '）', '');
       showOverlay('已加入 ' + added.length + ' 个模型', used.owner + '/' + used.repo, false, true);
       renderModels();
       if (added.length) {
@@ -1556,13 +1715,20 @@
         closeSrcDialog();
       }, 380);
       if (typeof onDone === 'function') onDone(null, { added: added, info: used });
+      // 本次「解析 → 选源 → 拉清单」的结论留一份快照。⚠️ 别改用 list() 判断选源结果 ——
+      // 下面的 switchModel(added[0]) 失败重试会把 m._external 的 source/base 改写成兜底源，
+      // 那是「重试后的状态」，不是「本次选源的落点」。
+      lastAddInfo = { source: used.source, base: used.base, accel: used.accel || '',
+                      owner: used.owner, repo: used.repo, branch: used.branch, added: added.length };
+      return { added: added, info: used };
     }).catch(function (e) {
       hideOverlay();
       setSrcStatus('');
       setSrcError('拉不到 models.json\n' + (e && e.message ? e.message : String(e)) +
-                  (e.reasons ? '\n  · raw: ' + (e.reasons[0] || '') +
-                              '\n  · jsDelivr: ' + (e.reasons[1] || '') : ''));
+                  (e.reasons ? '\n  · GitHub 原始: ' + (e.reasons[0] || '') +
+                              '\n  · 加速地址: ' + (e.reasons[1] || '') : ''));
       if (typeof onDone === 'function') onDone(e);
+      throw e;      // ⚠️ 必须再抛出去：否则调用方（以及自动化里的 .catch）以为成功了
     });
   }
 
@@ -1603,46 +1769,129 @@
     els.srcErr.textContent = msg ? String(msg) : '';
   }
 
-  // 记住 / 取回上次填的外部源链接。只存两样：URL 和当时选中的源（raw / cdn）——
-  // 后者也得记，不然下次预填出来的「实际生效地址」跟上次看到的不一样。
+  // 记住 / 取回上次填的外部源链接。存三样：URL、源形态（github / accel）、
+  // 以及**用户选过的加速地址**（自加的也算，见 customAccel）——
+  // 最后一个不止弹窗用：主页面的「加速兜底」也读它（rain 定的是「用上次选的那个」）。
   function loadExtSrcPref() {
     try { return JSON.parse(localStorage.getItem(EXTSRC_KEY) || 'null') || {}; } catch (e) { return {}; }
   }
-  function saveExtSrcPref(url, src) {
+  function saveExtSrcPref(url, src, accel, customAccel) {
     try {
-      if (!url) localStorage.removeItem(EXTSRC_KEY);   // 用户清空了输入框 = 主动忘掉
-      else localStorage.setItem(EXTSRC_KEY, JSON.stringify({ url: url, src: src || 'cdn' }));
+      if (!url && !accel && !customAccel) localStorage.removeItem(EXTSRC_KEY);   // 全空 = 主动忘掉
+      else localStorage.setItem(EXTSRC_KEY, JSON.stringify({
+        url: url || '',
+        src: (src === 'accel') ? 'accel' : 'github',
+        accel: accel || '',
+        customAccel: customAccel || ''
+      }));
     } catch (e) { /* 隐私模式下写不进去，忽略 */ }
   }
   // 把输入框当前的内容记下来（对话框关闭 / 输入变化 / 添加成功时都调一次）
   function persistSrcUrl() {
     if (!els.srcUrl) return;
-    saveExtSrcPref(els.srcUrl.value.trim(), pickedSrcKind());
+    saveExtSrcPref(els.srcUrl.value.trim(), pickedSrcKind(), pickedAccelBase(), pickedCustomAccel());
   }
-  // 段控件（raw / jsDelivr）的选中态
-  function applySrcKind(kind) {
-    if (!els.srcSeg) return;
-    if (kind !== 'cdn') kind = 'raw';
-    Array.prototype.forEach.call(els.srcSeg.querySelectorAll('.src-seg-opt'), function (x) {
-      x.classList.toggle('on', x.getAttribute('data-src') === kind);
+  // ---------- 「源」下拉框（取代原来的 raw / jsDelivr 段控件）----------
+  //
+  // 选项形态：<option value="github">GitHub 原始地址</option>
+  //           <option value="accel|<base>">ghproxy.net</option>
+  //           <option value="custom">自定义…</option>
+  // value 里带 base 是为了「一个下拉同时表达两个维度」—— 省掉一个联动控件。
+  var SRC_SEL_GITHUB = 'github';
+  var SRC_SEL_CUSTOM = 'custom';
+  var SRC_SEL_ACCEL_PREFIX = 'accel|';
+
+  // 下拉当前选中项的 value（防御性：拿不到就当 github）
+  function pickedSrcSel() {
+    if (!els.srcKind) return SRC_SEL_GITHUB;
+    return els.srcKind.value || SRC_SEL_GITHUB;
+  }
+  // 'github' / 'accel' —— 与 info.source、偏好里的 src 字段同一套取值
+  function pickedSrcKind() {
+    var v = pickedSrcSel();
+    if (v === SRC_SEL_GITHUB) return 'github';
+    return 'accel';
+  }
+  // 选中的加速地址（自定义时读小输入框）；选的是 github 就返回 ''
+  function pickedAccelBase() {
+    var v = pickedSrcSel();
+    if (v === SRC_SEL_GITHUB) return '';
+    if (v === SRC_SEL_CUSTOM) return normalizeAccelBase(els.srcAccelInput && els.srcAccelInput.value);
+    if (v.indexOf(SRC_SEL_ACCEL_PREFIX) === 0) return normalizeAccelBase(v.slice(SRC_SEL_ACCEL_PREFIX.length));
+    return '';
+  }
+  // 只在「选的是自定义」时才回填那个小输入框（选了预设项就别留脏值）
+  function pickedCustomAccel() {
+    if (pickedSrcSel() !== SRC_SEL_CUSTOM) return '';
+    return normalizeAccelBase(els.srcAccelInput && els.srcAccelInput.value);
+  }
+
+  // 把下拉切到某个加速地址上（能匹配到预设就选预设项，否则退到「自定义」）
+  function applySrcAccel(accelBase) {
+    if (!els.srcKind) return;
+    var a = normalizeAccelBase(accelBase);
+    if (!a) { els.srcKind.value = SRC_SEL_GITHUB; syncSrcAccelRow(); return; }
+    var opts = els.srcKind.querySelectorAll('option');
+    for (var i = 0; i < opts.length; i++) {
+      var v = opts[i].value || '';
+      if (v.indexOf(SRC_SEL_ACCEL_PREFIX) === 0 &&
+          normalizeAccelBase(v.slice(SRC_SEL_ACCEL_PREFIX.length)) === a) {
+        els.srcKind.value = v;
+        syncSrcAccelRow();
+        return;
+      }
+    }
+    // 不在预设里 —— 落到「自定义」并把地址填进小输入框
+    els.srcKind.value = SRC_SEL_CUSTOM;
+    if (els.srcAccelInput) els.srcAccelInput.value = a;
+    syncSrcAccelRow();
+  }
+
+  // 按当前下拉值显示 / 隐藏「自定义加速地址」那一行
+  function syncSrcAccelRow() {
+    if (!els.srcAccelRow) return;
+    els.srcAccelRow.hidden = (pickedSrcSel() !== SRC_SEL_CUSTOM);
+  }
+
+  // 把内置加速站清单填进下拉框（只填一次；元素在 index.html 里是空的）。
+  //   选项顺序 = ACCEL_PRESETS 的顺序，GitHub 原始地址永远排第一。
+  //   用户自加的地址不在这里 —— 它走「自定义…」那一项 + 小输入框。
+  function buildSrcKindOptions() {
+    if (!els.srcKind || els.srcKind.dataset.built === '1') return;
+    var html = '<option value="' + SRC_SEL_GITHUB + '">GitHub 原始地址（慢，但直连）</option>';
+    ACCEL_PRESETS.forEach(function (p) {
+      var b = normalizeAccelBase(p.base);
+      if (!b) return;
+      html += '<option value="' + SRC_SEL_ACCEL_PREFIX + escapeHtml(b) + '">' +
+              escapeHtml(p.label) + ' 加速</option>';
     });
+    html += '<option value="' + SRC_SEL_CUSTOM + '">自定义加速地址…</option>';
+    els.srcKind.innerHTML = html;
+    els.srcKind.dataset.built = '1';
   }
 
   function openSrcDialog() {
     if (!els.srcModal) return;
     // 手机端先把抽屉收掉，否则对话框被压在侧栏底下（见 closeNavForDialog）
     closeNavForDialog();
+    buildSrcKindOptions();
     S.srcOpen = true;
     els.srcModal.hidden = false;
     setSrcStatus('');
     setSrcError('');
-    // 预填上次填过的链接（只在输入框还空着时填 —— 用户自己清空过就别再塞回去）
+    // 预填上次填过的链接与源选择（只在输入框还空着时填 —— 用户自己清空过就别再塞回去）
+    // ⚠️ 源选择（下拉）**每次都恢复**，不受「输入框空不空」约束：用户上次特意选了某个
+    //    加速站，下次打开就该还是它。填完再 refreshSrcPreview 让它落到预览上。
     var pref = loadExtSrcPref();
-    if (els.srcUrl && !els.srcUrl.value && pref.url) {
-      els.srcUrl.value = pref.url;
-      applySrcKind(pref.src);
+    if (pref.url && els.srcUrl && !els.srcUrl.value) els.srcUrl.value = pref.url;
+    if (pref.customAccel && els.srcAccelInput && !els.srcAccelInput.value) {
+      els.srcAccelInput.value = pref.customAccel;
     }
-    if (els.srcUrl) { try { els.srcUrl.focus(); } catch (e) {} }
+    if (pref.accel) applySrcAccel(pref.accel);
+    else if (pref.src === 'accel' && pref.customAccel) applySrcAccel(pref.customAccel);
+    else if (els.srcKind) els.srcKind.value = SRC_SEL_GITHUB;
+    syncSrcAccelRow();
+    if (els.srcUrl && els.srcUrl.value) { try { els.srcUrl.focus(); } catch (e) {} }
     refreshSrcPreview();
   }
   function closeSrcDialog() {
@@ -1654,15 +1903,16 @@
     setSrcError('');
   }
 
-  // 输入框或段控件变化时，重新解析并显示预览。
+  // 输入框或源下拉变化时，重新解析并显示预览。
   // 解析规则：
-  //   · URL 必须能被 parseExternalUrl 识别（域名是 raw 或 jsDelivr），拿 owner/repo/branch
-  //   · 实际要用的源**由段控件说了算**：用户粘 raw URL 但想换成 jsDelivr 加速？直接切段控件
-  //     就行，地址自动重拼成 jsDelivr 的形式（owner/repo/branch 不变）。
+  //   · URL 必须能被 parseExternalUrl 识别（原始地址，或加速地址 + 原始地址），拿 owner/repo/branch
+  //   · 实际要用的源**由下拉框说了算**：用户粘原始 URL 但想走加速？选一个加速站就行，
+  //     地址自动重拼（owner/repo/branch 不变）。反过来也行：粘的是加速过的链接、
+  //     选「GitHub 原始地址」就自动把前缀摘掉。
   function refreshSrcPreview() {
     if (!els.srcUrl || !els.srcRepo || !els.srcBranch || !els.srcEffective) return;
+    syncSrcAccelRow();
     var raw = els.srcUrl.value.trim();
-    var picked = pickedSrcKind();
     if (!raw) {
       els.srcRepo.textContent = '—';
       els.srcBranch.textContent = '—';
@@ -1672,15 +1922,31 @@
     }
     try {
       var info = parseExternalUrl(raw);
-      // 段控件强制选源 —— 用解析出的 owner/repo/branch 重新拼 base
-      if (info.source !== picked) {
+      // 下拉强制选源 —— 用解析出的 owner/repo/branch 重新拼 base
+      var kind = pickedSrcKind();
+      var accel = pickedAccelBase();
+      if (kind === 'github') {
         info = { owner: info.owner, repo: info.repo, branch: info.branch,
-                 source: picked, base: rebuildBase(info.owner, info.repo, info.branch, picked),
+                 source: 'github', accel: '',
+                 base: 'https://raw.githubusercontent.com/' + info.owner + '/' + info.repo + '/' + info.branch + '/',
                  url: raw };
+        els.srcEffective.textContent = 'raw.githubusercontent.com';
+      } else {
+        if (!accel) {          // 选了自定义却没填地址 —— 明确提示，别假装能用
+          els.srcRepo.textContent = info.owner + ' / ' + info.repo;
+          els.srcBranch.textContent = info.branch;
+          els.srcEffective.textContent = '请填自定义加速地址';
+          if (els.srcPreview) els.srcPreview.classList.add('invalid');
+          return;
+        }
+        var rawBase = 'https://raw.githubusercontent.com/' + info.owner + '/' + info.repo + '/' + info.branch + '/';
+        info = { owner: info.owner, repo: info.repo, branch: info.branch,
+                 source: 'accel', accel: accel,
+                 base: accelerate(rawBase, accel), url: raw };
+        els.srcEffective.textContent = accelLabel(accel) + '（加速）';
       }
       els.srcRepo.textContent = info.owner + ' / ' + info.repo;
       els.srcBranch.textContent = info.branch;
-      els.srcEffective.textContent = info.source === 'cdn' ? 'cdn.jsdelivr.net' : 'raw.githubusercontent.com';
       if (els.srcPreview) els.srcPreview.classList.remove('invalid');
     } catch (e) {
       els.srcRepo.textContent = String((e && e.message) || e);
@@ -1688,16 +1954,6 @@
       els.srcEffective.textContent = '无法解析';
       if (els.srcPreview) els.srcPreview.classList.add('invalid');
     }
-  }
-  function pickedSrcKind() {
-    if (!els.srcSeg) return 'cdn';
-    var opt = els.srcSeg.querySelector('.src-seg-opt.on');
-    return opt ? opt.getAttribute('data-src') : 'cdn';
-  }
-  function rebuildBase(owner, repo, branch, source) {
-    return source === 'cdn'
-      ? 'https://cdn.jsdelivr.net/gh/' + owner + '/' + repo + '@' + branch + '/'
-      : 'https://raw.githubusercontent.com/' + owner + '/' + repo + '/' + branch + '/';
   }
 
   // ---------- 提示条 ----------
@@ -3659,17 +3915,17 @@
       els.srcUrl.addEventListener('input', refreshSrcPreview);
       els.srcUrl.addEventListener('change', function () { refreshSrcPreview(); persistSrcUrl(); });
     }
-    // 段控件切换 → 刷新预览 + 记住这次选的源
-    if (els.srcSeg) {
-      Array.prototype.forEach.call(els.srcSeg.querySelectorAll('.src-seg-opt'), function (opt) {
-        opt.addEventListener('click', function () {
-          applySrcKind(opt.getAttribute('data-src'));
-          refreshSrcPreview();
-          persistSrcUrl();
-        });
+    // 源下拉 + 自定义加速地址 → 刷新预览 + 记住这次的选择
+    if (els.srcKind) {
+      els.srcKind.addEventListener('change', function () {
+        syncSrcAccelRow();
+        refreshSrcPreview();
+        persistSrcUrl();
       });
-      // 默认 cdn（jsDelivr）
-      if (!els.srcSeg.querySelector('.src-seg-opt.on')) applySrcKind('cdn');
+    }
+    if (els.srcAccelInput) {
+      els.srcAccelInput.addEventListener('input', refreshSrcPreview);
+      els.srcAccelInput.addEventListener('change', function () { refreshSrcPreview(); persistSrcUrl(); });
     }
 
     // 「读取并添加」
@@ -3677,17 +3933,26 @@
       els.btnGoHandler = function () {
         var raw = (els.srcUrl && els.srcUrl.value || '').trim();
         if (!raw) { setSrcError('请先粘一个 models.json 链接'); return; }
+        var kind = pickedSrcKind();
+        var accel = pickedAccelBase();
+        if (kind === 'accel' && !accel) {
+          setSrcError('选了加速地址但还没填 —— 选一个预设加速站，或在「自定义」里粘一个加速地址');
+          return;
+        }
         setSrcError('');
         setSrcStatus('解析中…', '');
-        var picked = pickedSrcKind();
         var info;
         try {
           info = parseExternalUrl(raw);
-          // 段控件强制选源 —— 用 owner/repo/branch 重新拼 base
-          if (info.source !== picked) {
+          // 下拉强制选源 —— 用 owner/repo/branch 重新拼 base
+          var rawBase = 'https://raw.githubusercontent.com/' + info.owner + '/' + info.repo + '/' + info.branch + '/';
+          if (kind === 'github') {
             info = { owner: info.owner, repo: info.repo, branch: info.branch,
-                     source: picked, base: rebuildBase(info.owner, info.repo, info.branch, picked),
-                     url: raw };
+                     source: 'github', accel: '', base: rawBase, url: raw };
+          } else {
+            info = { owner: info.owner, repo: info.repo, branch: info.branch,
+                     source: 'accel', accel: accel,
+                     base: accelerate(rawBase, accel), url: raw };
           }
         } catch (e) {
           setSrcError('解析失败\n' + (e && e.message ? e.message : String(e)));
@@ -5210,7 +5475,7 @@
         : '内置兜底清单';
       var branchNow = S_branchByBase[S_modelsBase] || '';
       var baseFrom = S_modelsBase
-        ? (S_baseName === 'cdn' ? 'jsDelivr CDN' : 'raw.githubusercontent.com') +
+        ? (S_baseName === 'accel' ? (accelLabel(S_accelBase) || '第三方加速地址') : 'raw.githubusercontent.com') +
           (branchNow ? ' · ' + branchNow + ' 分支' : '')
         : '本机同源（models/ 就在页面旁边）';
       els.modelCount.title = '清单来源：' + srcFrom + '\n模型来源：' + baseFrom;
@@ -5235,12 +5500,14 @@
           mm: motionManager,
           handleLocalZip: handleLocalZip,
           // 模型资源基址快照（只读）：页面/模型分离后，「模型到底从哪个源取的」
-          // 是排查问题的第一现场 —— 是走了 raw？降级到 jsDelivr？还是被判成本机同源？
+          // 是排查问题的第一现场 —— 是走了 GitHub 原始地址？兜底切到哪个加速站？还是被判成本机同源？
           base: function () {
             return {
               base: S_modelsBase,
               cands: S_baseCandidates.slice(),
               name: S_baseName,
+              accelBase: S_accelBase,
+              forced: S_forcedSrc,
               branch: S_branchByBase[S_modelsBase] || '',
               local: isLocalHost(),
               source: S.source
@@ -5319,6 +5586,8 @@
             addByUrl: function (url) { return addExternalSource(parseExternalUrl(url)); },
             // 已经解析好的 {owner, repo, branch, source, base} 对象（自动化测试自己拼）
             add: function (info) { return addExternalSource(info); },
+            // 最近一次添加的「选源结论」（source/base/accel）—— 只读快照
+            lastAdd: function () { return lastAddInfo; },
             // 按 owner 移除整组
             remove: function (owner) { removeExternalSource(owner); },
             // 当前在 S.models 里的所有外部模型（只读快照）
@@ -5326,18 +5595,38 @@
               return S.models.filter(function (m) { return !!m._external; })
                 .map(function (m) { return { key: m.key, owner: m._external.owner, repo: m._external.repo,
                                             branch: m._external.branch, source: m._external.source,
+                                            accel: m._external.accel || '', base: m._external.base,
                                             path: m.path, file: m.file, name: m.name }; });
             },
             // UI 操作：开 / 关弹窗
             open: openSrcDialog,
             close: closeSrcDialog,
-            // 模拟在弹窗里改段控件（自动化可验证段控件联动）
-            setKind: function (kind) {
-              if (!els.srcSeg) return;
-              Array.prototype.forEach.call(els.srcSeg.querySelectorAll('.src-seg-opt'),
-                function (o) { o.classList.toggle('on', o.getAttribute('data-src') === kind); });
+            // 模拟在弹窗里改「源」下拉（自动化可验证下拉与预览联动）。
+            //   kind 取 'github' | 'accel'；给了 accelBase 就选到那个加速站
+            //   （匹配不到预设 → 自动落到「自定义」并填进小输入框）。
+            setKind: function (kind, accelBase) {
+              buildSrcKindOptions();
+              if (kind === 'github') applySrcAccel('');
+              else applySrcAccel(accelBase || (ACCEL_PRESETS[0] && ACCEL_PRESETS[0].base));
               refreshSrcPreview();
+              persistSrcUrl();
             },
+            // 当前下拉选中的值（探针断言用）：{sel, kind, accel, customRow}
+            pick: function () {
+              buildSrcKindOptions();
+              return {
+                sel: pickedSrcSel(),
+                kind: pickedSrcKind(),
+                accel: pickedAccelBase(),
+                customRow: !!(els.srcAccelRow && !els.srcAccelRow.hidden)
+              };
+            },
+            // 内置加速站清单（只读）—— 探针要核对下拉里确实列了这些
+            accelPresets: function () {
+              return ACCEL_PRESETS.map(function (p) { return { label: p.label, base: normalizeAccelBase(p.base) }; });
+            },
+            knownAccelBases: knownAccelBases,
+            accelerate: accelerate,
             // 弹窗里的预览快照（自动化验证预览）
             preview: function () {
               return {
@@ -5349,7 +5638,7 @@
             },
             // URL 解析（不发起网络）—— 自动化可以拿它核对解析逻辑
             parse: parseExternalUrl,
-            // 给定一个外部 info，构造另一个镜像（raw↔cdn）
+            // 给定一个外部 info，构造另一个镜像（github ↔ accel）
             altBase: altBase,
             // 只走「合进 S.models + 渲染」不走网络 —— 验收脚本喂假数据用。
             // 接受 info 和 rawList（与 fetchExternalModelsJson 返回值同结构）。

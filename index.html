@@ -62,7 +62,7 @@
              ⚠️ 必须待在 .side-head 内部 —— 不能成为 .sidebar 的直接子元素，
              否则会破坏「侧栏只有 4 个直接子元素」的回归断言（_regress / _probe_responsive）。 -->
         <button class="src-btn" id="btnAddSrc" type="button"
-                title="从其它仓库添加模型：填入 models.json 所在的原始链接（raw 或 jsDelivr 均可）"
+                title="从其它仓库添加模型：填入 models.json 链接（GitHub 原始地址，或加速前缀 + 原始地址）"
                 aria-label="添加外部模型源">
           <!-- stroke-width 与同区域的 .nav-close 保持一致（1.8），别自己另起一套 -->
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor"
@@ -295,9 +295,10 @@
 
         <!-- 「添加外部模型源」对话框。和本地预览 / 贡献模型一样挂在 .stage 内部
              （全屏时舞台才是整屏）。复用同一套 .modal-wrap / .modal 样式。
-             用户填的可以是 raw 链接（.../refs/heads/master/models.json），
-             也可以是 jsDelivr 链接（.../gh/owner/repo@master/models.json）。
-             弹窗里实时显示「这条 URL 会被解析成哪条源、哪个仓库」。 -->
+             用户填的必须是 raw 原始链接（.../refs/heads/master/models.json），
+             也可以粘一条「加速地址 + 原始链接」（前缀代理，如
+             https://gh-proxy.org/https://raw.githubusercontent.com/.../models.json）。
+             加速地址由下面的下拉框决定 —— 预览里实时显示最终会请求哪条地址。 -->
         <div class="modal-wrap" id="srcModal" hidden>
           <div class="modal-mask" id="srcMask"></div>
           <div class="modal" role="dialog" aria-modal="true" aria-labelledby="srcTitle">
@@ -312,23 +313,30 @@
                        placeholder="https://raw.githubusercontent.com/&lt;owner&gt;/&lt;repo&gt;/refs/heads/&lt;branch&gt;/models.json"
                        autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
                 <div class="hint">
-                  把别人仓库里 <code>models.json</code> 的原始链接粘过来。也可以粘 jsDelivr 链接 —— 见下方「镜像源」。
+                  把别人仓库里 <code>models.json</code> 的原始链接粘过来。
+                  加速链接（<code>[加速地址]https://raw.githubusercontent.com/...</code>）也能直接粘，会被自动拆开。
                   模型文件实际位置在那个仓库的 <code>models/</code> 子目录下，格式与本页一致（model3.json + moc3 + 贴图）。
                 </div>
               </div>
 
               <div class="fld">
-                <div class="fld-t">镜像源</div>
-                <div class="src-seg" id="srcSeg" role="tablist">
-                  <button type="button" class="src-seg-opt" data-src="raw" role="tab">
-                    <i class="sw-dot" style="background:#1e2531;"></i><span>raw.githubusercontent.com</span>
-                  </button>
-                  <button type="button" class="src-seg-opt on" data-src="cdn" role="tab">
-                    <i class="sw-dot" style="background:#f0a035;"></i><span>cdn.jsdelivr.net</span>
-                  </button>
+                <!-- 源选择：一个下拉表达「GitHub 原始 / 某个加速站 / 自定义加速地址」。
+                     value 带上前缀 accel| 是为了把一个维度塞进 select（省掉联动控件）；
+                     「自定义」那一项选中后才显示下面的小输入框（srcAccelRow）。 -->
+                <div class="fld-t">数据源</div>
+                <select class="inp sel" id="srcKind"></select>
+                <div class="src-accel-row" id="srcAccelRow" hidden>
+                  <input class="inp" id="srcAccelInput" type="text"
+                         placeholder="https://gh-proxy.org/"
+                         autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+                  <div class="hint">
+                    加速地址是个<b>前缀代理</b>：最终请求 = 加速地址 + GitHub 原始地址。
+                    只写域名也行（<code>gh-proxy.org</code> 会自动补 <code>https://</code>）。
+                  </div>
                 </div>
                 <div class="hint">
-                  默认走 jsDelivr（国内快）；raw 是 GitHub 官方源、无缓存但有限速。URL 与源不匹配时会自动纠正并提示。
+                  默认走 GitHub 原始地址（无中间人，但国内可能慢 / 被限速）。
+                  拉不到时会自动改用这里选的加速站重试一次。
                 </div>
               </div>
 

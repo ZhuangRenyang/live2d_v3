@@ -492,21 +492,21 @@
   }
   .modal-err[hidden]{ display:none; }
 
-  /* 「添加外部模型源」弹窗里的镜像源选择段控件 —— 与「舞台背景」「列表循环」
-     同思路：当前选中加 .on、未选灰白；点击切。 */
-  .src-seg{
-    display:flex; gap:6px; padding:4px; border-radius:10px;
-    border:1px solid var(--line-strong); background:var(--panel-2);
+  /* 「添加外部模型源」弹窗里的源选择 —— 2026-09-23 起是**一个下拉框**
+     （GitHub 原始地址 / 各加速站 / 自定义…），取代了原来的 raw·jsDelivr 段控件。
+     选「自定义」时才露出下面那行 .src-accel-row（由 syncSrcAccelRow() 控 hidden）。 */
+  .inp.sel{
+    appearance:none; -webkit-appearance:none; cursor:pointer;
+    padding-right:26px;                    /* 给自绘箭头留位 */
+    background-image:linear-gradient(45deg,transparent 50%,var(--text-dim) 50%),
+                     linear-gradient(135deg,var(--text-dim) 50%,transparent 50%);
+    background-position:calc(100% - 15px) center, calc(100% - 10px) center;
+    background-size:5px 5px, 5px 5px;
+    background-repeat:no-repeat;
+    font-family:inherit;                   /* 下拉里是域名/中文，别用等宽 */
   }
-  .src-seg-opt{
-    flex:1 1 0; display:flex; align-items:center; justify-content:center; gap:6px;
-    padding:7px 10px; border-radius:7px; cursor:pointer; border:1px solid transparent;
-    background:transparent; color:var(--text-dim); font-size:12px; font-weight:600;
-    transition:.15s;
-  }
-  .src-seg-opt:hover{ color:var(--text); }
-  .src-seg-opt.on{ background:var(--panel); border-color:var(--accent); color:var(--text); box-shadow:var(--shadow-sm); }
-  .src-seg-opt .sw-dot{ width:9px; height:9px; border-radius:50%; flex:0 0 auto; }
+  .src-accel-row{ display:flex; flex-direction:column; gap:6px; }
+  .src-accel-row[hidden]{ display:none; }
 
   /* 解析预览：三行 owner/repo/branch + 生效源，键值对齐，方便一眼核对 */
   .src-preview{
@@ -588,7 +588,7 @@
     .model-item .mi-rm{ opacity:1; width:26px; height:26px; }
   }
 
-  /* 外部模型项右侧的「来源小标签」（raw / jsDelivr）。
+  /* 外部模型项右侧的「来源小标签」（GitHub / 加速站名）。
      比 .desc 更显眼，但比外部「移除」安静 —— 让人知道这是外部模型但默认不碍眼 */
   .model-item .ext-tag{
     flex:0 0 auto; margin-left:auto; padding:1px 6px; border-radius:999px;
