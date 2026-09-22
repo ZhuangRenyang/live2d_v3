@@ -556,14 +556,24 @@
   // 做法是「换前缀、保分支」：
   //   · 分支从当前 S_modelsBase 反查（S_branchByBase），不是从 BRANCHES[0] 猜 ——
   //     当前源可能已经因为兜底/分支回退落到了 main 上，换源时把它保住。
-  //   · force = 'accel' → 当前源已经是加速形态就原样不动（只换不重拼，避免
-  //     用户选的加速站与兜底用的那个不一致时把当前状态又拽回去）；是 raw 才加前缀。
+  //   · force = 'accel' 并且给了 accelBase → 拼到**那个站**上（见下面的 whyBase）。
   //   · force = 'github' → 剥掉加速前缀回到 raw。
+  //   · **已经是加速态时再换另一个站也要真的换过去** —— 因为调用方已经保证了
+  //     「这是用户确认过的意图」。旧版本这里有个 `if (isAccel) return false;` 守卫，
+  //     那是「下拉一 change 就生效」时代的产物（分不清「真想换」和「点着看看」，
+  //     所以保守不动）；现在有了确认这一关，再留着它就会让「选了也确认了却什么都没变」。
   //
   // ⚠️ 候选表要跟着重建（pinBranch），否则下次 advanceModelsBase 会从「旧源的老顺序」
   //    里挑下一项，等于把刚换过去的源又切回来。
   // ⚠️ 本机同源模式（候选表为空）什么都不做 —— 模型就在页面旁边，没「源」可换。
-  function repinModelsBase(force) {
+  //
+  // ⚠️⚠️ 参数 whyBase（**用户在下拉里明确选的那个加速地址**，不是 S_accelBase）：
+  //     不传它的时候只能拿 S_accelBase 兜底，而那个语义是「raw 拉不到时兜底用哪个站」，
+  //     与「用户现在想用哪个站」是两件事。踩过的坑：用户从 gh-proxy.org 切到
+  //     ghproxy.net、再点「取消」要退回原来的站 —— 取消时 S_accelBase 已经被改成了
+  //     ghproxy.net，若这里还读 S_accelBase，就会把 gh-proxy 那次的源又拼回 ghproxy.net。
+  //     **回退必须把目标地址显式传进来。**
+  function repinModelsBase(force, whyBase) {
     if (!S_baseCandidates.length) return false;
     var br = S_branchByBase[S_modelsBase] || BRANCHES[0];
     var raw = rawBaseOf(br);
@@ -574,14 +584,10 @@
     //    两者一比不相等 → 判定成「不是加速态」→ 重拼到 B —— 正是要避免的那件事。
     //    S_baseName 是 baseName() 按主机名给的，与「用的是哪个站」无关，稳。
     var isRaw = S_baseName === 'github' || S_modelsBase === raw;
-    var isAccel = S_baseName === 'accel';
     var next = S_modelsBase;
 
     if (force === 'accel') {
-      // 已经在加速上就别动 —— 当前用的可能是兜底切过去的另一个站，
-      // 强行重拼会把它拽到用户在下拉里选的那个站上（那不是「换源」，是「改兜底」）。
-      if (isAccel) return false;
-      var a = S_accelBase ||
+      var a = normalizeAccelBase(whyBase) || S_accelBase ||
               normalizeAccelBase(ACCEL_PRESETS[0] && ACCEL_PRESETS[0].base);
       if (!a) return false;                 // 一个加速地址都拿不到 —— 保持原样比乱切好
       next = accelerate(raw, a);
@@ -1930,6 +1936,105 @@
     els.srcKind.dataset.built = '1';
   }
 
+  // ============================================================
+  // 「未确认就换源」的防线：弹窗打开时拍一张快照，取消 / 关闭时还原
+  // ============================================================
+  //
+  // ⚠️⚠️ rain 2026-09-23 反馈：「只要选择或者切换加速镜像，即便不确认，都会改变」。
+  //    原实现是「下拉 change → 立刻换源 + 立刻写 localStorage」，于是：
+  //      · 用户只是想**看看**某个加速站叫什么，源已经被换走了（左侧列表当场改走加速）；
+  //      · 点「取消」也回不来 —— change 早把偏好写进 localStorage 了；
+  //      · 刷新后仍是那个加速站（因为写的是持久偏好）。
+  //
+  //    改成「暂存 + 确认/取消」两段式：
+  //      · 下拉 / 自定义输入框变化 → 只**暂存**待生效的源，先不动 S_modelsBase，
+  //        也不写持久偏好（可以随便点着看，零副作用）；
+  //      · 点「读取并添加」（或真正关闭弹窗）→ 才 apply 并落盘。
+  //
+  // ⚠️ 快照要在**预填之前**拍，否则拍到的就是预填后的值，还原等于没还。
+  var srcPending = null;      // { kind:'github'|'accel', accel:'<加速地址>' } | null
+  var srcSnap = null;         // 打开弹窗那一刻的现场，取消/关闭时照着还原
+
+  // 当前**下拉里显示**的源（不看是否已生效）——「暂存」和「提交」都读它
+  function pickedSrcState() {
+    return { kind: pickedSrcKind(), accel: pickedAccelBase() };
+  }
+  function srcStateEq(a, b) {
+    if (!a || !b) return a === b;
+    return a.kind === b.kind &&
+           normalizeAccelBase(a.accel) === normalizeAccelBase(b.accel);
+  }
+
+  function takeSrcSnapshot() {
+    srcSnap = {
+      // 左端：进弹窗时列表实际用的是哪个源（还原要回到「取消时那一刻」的现场）
+      base: S_modelsBase,
+      baseName: S_baseName,
+      cands: S_baseCandidates.slice(),
+      accelBase: S_accelBase,
+      // 右端：弹窗控件现场（源下拉的选中值 + 自定义地址框）
+      customAccel: els.srcAccelInput ? els.srcAccelInput.value : '',
+      sel: pickedSrcSel()
+    };
+    srcPending = null;
+  }
+
+  // 还原到快照 + 丢掉未确认的暂存。返回是否真的动过源（动过就要重画列表）。
+  //
+  // ⚠️⚠️ 只还原**源**（下拉选择 + 偏好里的 accel/src），**不还原 URL 输入框** ——
+  //    「记住粘过的链接」是本来就要的行为，用户填了链接点取消，下次打开还该在。
+  //    源则相反：没确认就不该生效，也不该被记住。这两件事必须分开处理，
+  //    否则「取消」会把用户刚粘的链接也一起吞掉。
+  function revertSrcDialog() {
+    if (!srcSnap) { srcPending = null; return false; }
+    var moved = false;
+    // ⚠️ 还原基址必须走 repin，且把「原来那个加速站」**显式**传进去 ——
+    //    不能指望 S_accelBase，它可能已经被暂存阶段改掉了。
+    var snapAccel = normalizeAccelBase(srcSnap.accelBase);
+    S_accelBase = snapAccel || S_accelBase;
+    if (S_modelsBase !== srcSnap.base) {
+      if (srcSnap.baseName === 'accel' && snapAccel) moved = repinModelsBase('accel', snapAccel);
+      else moved = repinModelsBase('github');
+      // 候选表跟着还原（repin 会 pinBranch，这里再校一次更稳）
+      S_baseCandidates = srcSnap.cands.slice();
+    }
+    // 偏好：URL 照当前输入框**记下来**（这是该留的），但 src/accel 用快照里的
+    //   —— 也就是「链接记住了、源没被改」。
+    saveExtSrcPref(els.srcUrl ? els.srcUrl.value.trim() : '',
+                   srcSnap.baseName === 'accel' ? 'accel' : 'github',
+                   snapAccel, srcSnap.customAccel || '');
+    // 控件：源下拉回到快照那一刻的选择（URL 输入框保持用户填的内容，不动）
+    if (els.srcKind) els.srcKind.value = srcSnap.sel || SRC_SEL_GITHUB;
+    syncSrcAccelRow();
+    srcPending = null;
+    srcSnap = null;
+    return moved;
+  }
+
+  // 暂存：下拉 / 自定义输入框一变就调。**只记，不生效、不落盘**。
+  //
+  // ⚠️ 弹窗没开着时也要能暂存（探针用 setKind 直接驱动、不开弹窗）。
+  //    早期版本这里写了 `if (!srcSnap) return;` —— 结果 setKind(..., commit=true)
+  //    在没开弹窗时永远 commit 不动（srcPending 一直是 null），M 组 12 条齐报红。
+  //    「暂存」这个动作本身不依赖弹窗是否开着。
+  function stageSrcChange() {
+    srcPending = pickedSrcState();
+  }
+
+  // 提交：把暂存的源真正用起来 + 落盘。返回是否动过源。
+  function commitSrcChange() {
+    var moved = false;
+    if (srcPending) {
+      // ⚠️ 先把「用户选的那个站」写进 S_accelBase，再 repin —— 顺序反了会拼到旧站上
+      if (srcPending.accel) S_accelBase = normalizeAccelBase(srcPending.accel) || S_accelBase;
+      moved = repinModelsBase(srcPending.kind, srcPending.accel);
+    }
+    persistSrcUrl();                    // 提交才记住
+    srcPending = null;
+    srcSnap = null;
+    return moved;
+  }
+
   function openSrcDialog() {
     if (!els.srcModal) return;
     // 手机端先把抽屉收掉，否则对话框被压在侧栏底下（见 closeNavForDialog）
@@ -1939,6 +2044,8 @@
     els.srcModal.hidden = false;
     setSrcStatus('');
     setSrcError('');
+    // ⚠️ 快照必须在预填**之前**拍（见 takeSrcSnapshot 的注释）
+    takeSrcSnapshot();
     // 预填上次填过的链接与源选择（只在输入框还空着时填 —— 用户自己清空过就别再塞回去）
     // ⚠️ 源选择（下拉）**每次都恢复**，不受「输入框空不空」约束：用户上次特意选了某个
     //    加速站，下次打开就该还是它。填完再 refreshSrcPreview 让它落到预览上。
@@ -1953,10 +2060,17 @@
     syncSrcAccelRow();
     if (els.srcUrl && els.srcUrl.value) { try { els.srcUrl.focus(); } catch (e) {} }
     refreshSrcPreview();
+    // ⚠️ 预填之后**再清一次** pending：预填是「恢复上次的选择」，不是「用户这次改的」，
+    //    留着它会让「打开弹窗什么也不做 → 取消」误判成「改过源了」。
+    srcPending = null;
   }
+  // 关窗。默认**丢弃**未确认的改动并还原（点 × / 点遮罩 / 按 Esc 都算取消）。
+  // ⚠️ 「读取并添加」成功那条路要先 commitSrcChange()，所以到这里 pending 已是 null，
+  //    还原不会把它抹掉。
   function closeSrcDialog() {
     if (!els.srcModal) return;
-    persistSrcUrl();          // 关窗即记住（下次打开预填）
+    var moved = revertSrcDialog();
+    if (moved) renderModels();        // 源被还原过 → 列表头标签要跟着回去
     S.srcOpen = false;
     els.srcModal.hidden = true;
     setSrcStatus('');
@@ -3975,30 +4089,27 @@
       els.srcUrl.addEventListener('input', refreshSrcPreview);
       els.srcUrl.addEventListener('change', function () { refreshSrcPreview(); persistSrcUrl(); });
     }
-    // 源下拉 + 自定义加速地址 → 刷新预览 + 记住这次的选择 + **立即把左侧列表的取数源换过去**
-    // ⚠️ repinModelsBase 必须在这里调：用户改了源却要等下次刷新才生效，就是 rain 反馈的那个缺口。
-    //    只改 S_accelBase 不管用 —— 那是「兜底用哪个站」，主源仍是 boot 时钉的那个。
+    // 源下拉 + 自定义加速地址 → 刷新预览 + **暂存**这次的选择。
+    // ⚠️⚠️ 这里**不能**立刻换源、也不能立刻写 localStorage（rain 2026-09-23 反馈）：
+    //    只是把下拉点开看一眼某个加速站，源就被换走了，点「取消」还回不来
+    //    —— 因为偏好已经落盘，刷新后照样是它。改成「暂存 → 确认才生效」，
+    //    真正 apply 的地方在 submitSrcDialog()（「读取并添加」那条路）。
     if (els.srcKind) {
       els.srcKind.addEventListener('change', function () {
         syncSrcAccelRow();
         refreshSrcPreview();
-        persistSrcUrl();
-        // ⚠️⚠️ 选到「自定义…」这一项时**先别换源**：那一刻小输入框里装的是**上一次**
-        //    留下的脏值（也可能空着），此时 pickedAccelBase() 读到的是它 ——
-        //    真用户「打开下拉 → 选自定义 → 才刚开始打字」会看到源莫名其妙跳到旧地址上。
-        //    自定义地址的换源交给小输入框自己的 change 事件（用户敲完/失焦那一下）。
+        // ⚠️ 选到「自定义…」时那一发 change 不该被当成「选了某个源」：此刻小输入框里
+        //    装的是上一次留下的脏值（也可能空着），pickedAccelBase() 读到的是它。
+        //    自定义地址等用户真敲进小输入框再暂存。
         if (pickedSrcSel() === SRC_SEL_CUSTOM) return;
-        S_accelBase = pickedAccelBase() || S_accelBase;
-        if (repinModelsBase(pickedSrcKind())) renderModels();   // 列表头那行标签要跟着变
+        stageSrcChange();
       });
     }
     if (els.srcAccelInput) {
       els.srcAccelInput.addEventListener('input', refreshSrcPreview);
       els.srcAccelInput.addEventListener('change', function () {
         refreshSrcPreview();
-        persistSrcUrl();
-        S_accelBase = pickedAccelBase() || S_accelBase;
-        if (repinModelsBase(pickedSrcKind())) renderModels();
+        stageSrcChange();
       });
     }
 
@@ -4013,6 +4124,11 @@
           setSrcError('选了加速地址但还没填 —— 选一个预设加速站，或在「自定义」里粘一个加速地址');
           return;
         }
+        // ⚠️ 走到这里 = 用户点了「读取并添加」，是**确认**动作：
+        //    现在才把暂存的源真正生效 + 落盘（见 submitSrcDialog 的注释）。
+        //    放在校验之后 —— 校验没过就别改源，用户还要接着改。
+        stageSrcChange();
+        if (commitSrcChange()) renderModels();
         setSrcError('');
         setSrcStatus('解析中…', '');
         var info;
@@ -5682,19 +5798,26 @@
             // 模拟在弹窗里改「源」下拉（自动化可验证下拉与预览联动）。
             //   kind 取 'github' | 'accel'；给了 accelBase 就选到那个加速站
             //   （匹配不到预设 → 自动落到「自定义」并填进小输入框）。
-            // ⚠️ 必须与真实 change 事件走同一条路（含 repinModelsBase）——
-            //    只改下拉不换源的话，探针测的是「标签变了」而不是「源变了」。
-            setKind: function (kind, accelBase) {
+            // ⚠️ 默认**只暂存**（与真实 change 事件同一条路）：不换源、不落盘。
+            //    要给「用户在真实页面里亲手改的」那一态（即换源已生效）就传 commit=true。
+            setKind: function (kind, accelBase, commit) {
               buildSrcKindOptions();
               if (kind === 'github') applySrcAccel('');
               else applySrcAccel(accelBase || (ACCEL_PRESETS[0] && ACCEL_PRESETS[0].base));
               refreshSrcPreview();
-              persistSrcUrl();
-              S_accelBase = pickedAccelBase() || S_accelBase;
-              var moved = repinModelsBase(pickedSrcKind());
+              stageSrcChange();
+              if (!commit) return false;
+              // ⚠️ 别写成 `return commitSrcChange() && !!renderModels()` —— renderModels()
+              //    没有返回值（undefined），`!!undefined` 是 false，会把整条表达式按成 false：
+              //    源其实换成功了，返回值却说「没换」。M5/M8 就是这么假红的。
+              var moved = commitSrcChange();
               if (moved) renderModels();
               return moved;
             },
+            // 暂存 → 确认（等价于点「读取并添加」那一下）
+            commit: function () { var m = commitSrcChange(); if (m) renderModels(); return m; },
+            // 丢弃未确认的改动并还原（等价于点「取消」）
+            cancel: function () { var m = revertSrcDialog(); if (m) renderModels(); return m; },
             // 直接调换源逻辑（不碰下拉）—— 探针测「advanceModelsBase 之后不被覆盖」这类
             // 竞态时要能单独调它，绕开 UI。
             repin: function (kind) { return repinModelsBase(kind); },
