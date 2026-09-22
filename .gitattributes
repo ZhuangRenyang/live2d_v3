@@ -1,0 +1,61 @@
+# 行尾统一：文本文件在仓库里一律存 LF，跟操作系统无关。
+#
+# 为什么必须显式写这个：
+#   本机 core.autocrlf=true（Windows 上的常见默认值），于是同一个文件
+#   在不同机器 / 不同时刻的「工作区形态」可能是 CRLF 也可能是 LF。
+#   结果是 git status 里冒出成百上千个「修改」，diff 一看却是
+#   「14 万行删除、0 行新增」—— 纯粹是行尾对不上，内容一个字都没变。
+#   这种噪音一多，真正的改动会被淹掉，也没法 review。
+#
+# 规则说明：
+#   `text=auto` 之外的显式条目，是给「扩展名不明确」或「必须保持原样」的文件用的。
+#   LF 优先（`eol=lf`）对我们最重要的三个原因：
+#     1. models/ 下的 .json 会被页面 fetch、也会被 models_tool.py 解析，
+#        统一 LF 后同一份内容在任何平台生成的字节完全一致
+#        （models_tool.py 写索引时也刻意用 newline='\n'，两边对齐）。
+#     2. 工作流在 Linux runner 上跑，那边只有 LF，不对齐会反复产生无意义 diff。
+#     3. 提交历史干净，review 时不会被行尾变更淹没。
+#
+# ⚠️ 二进制文件必须标 binary，否则 git 可能尝试转换、损坏文件。
+#    尤其是 Live2D 的 .moc3 / .png —— 它们体积大，一旦被改写很难发现。
+#    这里的 `.moc3` 是 Cubism 的模型二进制，绝不能让 git 碰它的行尾。
+
+# 默认：让 git 自己判断是不是文本
+* text=auto
+
+# ── 明确的文本文件：仓库里一律 LF ──────────────────────────────────────
+*.html   text eol=lf
+*.css    text eol=lf
+*.js     text eol=lf
+*.mjs    text eol=lf
+*.json   text eol=lf
+*.md     text eol=lf
+*.py     text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.sh     text eol=lf
+*.txt    text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# ── 二进制文件：git 别碰 ────────────────────────────────────────────────
+*.moc3   binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.mp3    binary
+*.ogg    binary
+*.wav    binary
+*.zip    binary
+*.ttf    binary
+*.woff   binary
+*.woff2  binary
+*.ico    binary
+
+# ── 不做行尾检查的自动生成物 / 依赖库 ──────────────────────────────────
+# 这几个第三方库是官方分发的压缩版，保持原样，别让任何转换碰它们。
+assets/cubism4.min.js            -text
+assets/pixi.min.js               -text
+assets/live2dcubismcore.min.js   -text
