@@ -324,7 +324,10 @@
     dragging: false,
     dragStart: null,
     wire: null,          // 网格容器
-    checkerOn: false,    // 棋盘底：舞台背景换成棋盘格（看透明区用）
+    checkerOn: true,     // 棋盘底：舞台背景换成棋盘格（看透明 / 半透明边缘用）。
+                         // ⚠️ 默认**开**（2026-09-23 rain 要求）—— 与 `#checkerBg` 的
+                         //    HTML `checked` 属性、以及下面 localStorage 缺省分支三处必须一致，
+                         //    漏一处就会出现「复选框打着勾但舞台不画棋盘」这种半生效状态。
     busyModel: false,
     pendingModel: null,  // 载入中又点了别的模型时暂存下来，载完再切过去
     autoPlayAll: false,  // 「列表循环」开关。这里的「列表」指的是**模型列表**（侧栏那个）：
@@ -541,6 +544,63 @@
     // 收窄后要让加速地址排前面，否则下一次 advanceModelsBase 会又切回挂掉的 raw。
     var accelFirst = !!S_accelBase && /^https?:\/\/raw\.githubusercontent\.com\//i.test(base) === false;
     S_baseCandidates = accelFirst ? acc.concat([raw]) : [raw].concat(acc);
+  }
+
+  // 用户在弹窗里换了「数据源」之后，把当前生效的基址**原地换到新源**上去。
+  //
+  // ⚠️⚠️ 为什么需要它：S_modelsBase 只在 boot 时钉一次（buildBaseCandidates()[0]），
+  //    之后切换数据源**不会**重钉它 —— 于是出现「在弹窗里把源选成加速站，
+  //    回到左侧列表点模型，还是从 raw.githubusercontent.com 取」这种前后矛盾的体验
+  //    （rain 2026-09-23 反馈）。这个函数把那条线接上。
+  //
+  // 做法是「换前缀、保分支」：
+  //   · 分支从当前 S_modelsBase 反查（S_branchByBase），不是从 BRANCHES[0] 猜 ——
+  //     当前源可能已经因为兜底/分支回退落到了 main 上，换源时把它保住。
+  //   · force = 'accel' → 当前源已经是加速形态就原样不动（只换不重拼，避免
+  //     用户选的加速站与兜底用的那个不一致时把当前状态又拽回去）；是 raw 才加前缀。
+  //   · force = 'github' → 剥掉加速前缀回到 raw。
+  //
+  // ⚠️ 候选表要跟着重建（pinBranch），否则下次 advanceModelsBase 会从「旧源的老顺序」
+  //    里挑下一项，等于把刚换过去的源又切回来。
+  // ⚠️ 本机同源模式（候选表为空）什么都不做 —— 模型就在页面旁边，没「源」可换。
+  function repinModelsBase(force) {
+    if (!S_baseCandidates.length) return false;
+    var br = S_branchByBase[S_modelsBase] || BRANCHES[0];
+    var raw = rawBaseOf(br);
+    // ⚠️⚠️ 「当前是不是已经在加速源上」必须**靠身份**（S_baseName）判断，
+    //    不能写成 `S_modelsBase === accelerate(raw, S_accelBase)` ——
+    //    那样算出来的结果会被**同一次操作里刚更新的 S_accelBase** 带动：
+    //    用户从 A 站换到 B 站时，S_accelBase 已经是 B 了，而当前源还是 A 开头的，
+    //    两者一比不相等 → 判定成「不是加速态」→ 重拼到 B —— 正是要避免的那件事。
+    //    S_baseName 是 baseName() 按主机名给的，与「用的是哪个站」无关，稳。
+    var isRaw = S_baseName === 'github' || S_modelsBase === raw;
+    var isAccel = S_baseName === 'accel';
+    var next = S_modelsBase;
+
+    if (force === 'accel') {
+      // 已经在加速上就别动 —— 当前用的可能是兜底切过去的另一个站，
+      // 强行重拼会把它拽到用户在下拉里选的那个站上（那不是「换源」，是「改兜底」）。
+      if (isAccel) return false;
+      var a = S_accelBase ||
+              normalizeAccelBase(ACCEL_PRESETS[0] && ACCEL_PRESETS[0].base);
+      if (!a) return false;                 // 一个加速地址都拿不到 —— 保持原样比乱切好
+      next = accelerate(raw, a);
+    } else if (force === 'github') {
+      if (isRaw) return false;
+      next = raw;
+    } else {
+      return false;
+    }
+
+    if (next === S_modelsBase) return false;
+    var prev = S_modelsBase;
+    S_branchByBase[next] = S_branchByBase[next] || br;
+    S_modelsBase = next;
+    S_baseName = baseName(next);
+    // 候选表按新源重建（保留同一分支的另一源作为兜底）
+    pinBranch(next);
+    console.warn('[viewer] 数据源已切换：' + prev + ' → ' + next);
+    return true;
   }
 
   // 从 GitHub Pages / 自定义域名里推断出 用户名/仓库名
@@ -3915,17 +3975,31 @@
       els.srcUrl.addEventListener('input', refreshSrcPreview);
       els.srcUrl.addEventListener('change', function () { refreshSrcPreview(); persistSrcUrl(); });
     }
-    // 源下拉 + 自定义加速地址 → 刷新预览 + 记住这次的选择
+    // 源下拉 + 自定义加速地址 → 刷新预览 + 记住这次的选择 + **立即把左侧列表的取数源换过去**
+    // ⚠️ repinModelsBase 必须在这里调：用户改了源却要等下次刷新才生效，就是 rain 反馈的那个缺口。
+    //    只改 S_accelBase 不管用 —— 那是「兜底用哪个站」，主源仍是 boot 时钉的那个。
     if (els.srcKind) {
       els.srcKind.addEventListener('change', function () {
         syncSrcAccelRow();
         refreshSrcPreview();
         persistSrcUrl();
+        // ⚠️⚠️ 选到「自定义…」这一项时**先别换源**：那一刻小输入框里装的是**上一次**
+        //    留下的脏值（也可能空着），此时 pickedAccelBase() 读到的是它 ——
+        //    真用户「打开下拉 → 选自定义 → 才刚开始打字」会看到源莫名其妙跳到旧地址上。
+        //    自定义地址的换源交给小输入框自己的 change 事件（用户敲完/失焦那一下）。
+        if (pickedSrcSel() === SRC_SEL_CUSTOM) return;
+        S_accelBase = pickedAccelBase() || S_accelBase;
+        if (repinModelsBase(pickedSrcKind())) renderModels();   // 列表头那行标签要跟着变
       });
     }
     if (els.srcAccelInput) {
       els.srcAccelInput.addEventListener('input', refreshSrcPreview);
-      els.srcAccelInput.addEventListener('change', function () { refreshSrcPreview(); persistSrcUrl(); });
+      els.srcAccelInput.addEventListener('change', function () {
+        refreshSrcPreview();
+        persistSrcUrl();
+        S_accelBase = pickedAccelBase() || S_accelBase;
+        if (repinModelsBase(pickedSrcKind())) renderModels();
+      });
     }
 
     // 「读取并添加」
@@ -5444,12 +5518,16 @@
       S.soundEnabled = st.soundEnabled;
       els.soundEnabled.checked = st.soundEnabled;
     }
-    // 棋盘底：老用户没存过这个字段时保持默认（关）
+    // 棋盘底：默认**开**（2026-09-23 rain 要求）。
+    // ⚠️ 不能只在「存过这个字段」时才应用 —— 那样首次访问（localStorage 里什么都没有）
+    //    会出现「复选框打着勾、舞台却不画棋盘」的半生效状态：勾选态来自 HTML 的 `checked`，
+    //    而 `.checker` class 没人加。所以缺省分支也要显式落一次。
     if (st && typeof st.checkerBg === 'boolean') {
       S.checkerOn = st.checkerBg;
       els.checkerBg.checked = st.checkerBg;
-      if (els.stage) els.stage.classList.toggle('checker', st.checkerBg);
     }
+    if (els.stage) els.stage.classList.toggle('checker', S.checkerOn);
+    els.checkerBg.checked = S.checkerOn;
     if (st && typeof st.navPinned === 'boolean') {
       S.navPinned = st.navPinned;
       applyNavPin();
@@ -5604,13 +5682,22 @@
             // 模拟在弹窗里改「源」下拉（自动化可验证下拉与预览联动）。
             //   kind 取 'github' | 'accel'；给了 accelBase 就选到那个加速站
             //   （匹配不到预设 → 自动落到「自定义」并填进小输入框）。
+            // ⚠️ 必须与真实 change 事件走同一条路（含 repinModelsBase）——
+            //    只改下拉不换源的话，探针测的是「标签变了」而不是「源变了」。
             setKind: function (kind, accelBase) {
               buildSrcKindOptions();
               if (kind === 'github') applySrcAccel('');
               else applySrcAccel(accelBase || (ACCEL_PRESETS[0] && ACCEL_PRESETS[0].base));
               refreshSrcPreview();
               persistSrcUrl();
+              S_accelBase = pickedAccelBase() || S_accelBase;
+              var moved = repinModelsBase(pickedSrcKind());
+              if (moved) renderModels();
+              return moved;
             },
+            // 直接调换源逻辑（不碰下拉）—— 探针测「advanceModelsBase 之后不被覆盖」这类
+            // 竞态时要能单独调它，绕开 UI。
+            repin: function (kind) { return repinModelsBase(kind); },
             // 当前下拉选中的值（探针断言用）：{sel, kind, accel, customRow}
             pick: function () {
               buildSrcKindOptions();
