@@ -1,4 +1,33 @@
-name: 模型增量检查与发布
+name: 模型索引与增量发布
+
+# ── 职责划分：Python 管"算"，工作流管"发" ──────────────────────────────
+# models_tool.py 是 models/ 目录的唯一权威，文件系统与 JSON 逻辑全在它里面：
+#   · 扫描 models/、生成根目录 models.json
+#   · 读 models.json 当基线，识别哪些模型是新增的
+#   · 把新增模型整目录复制到 live2d_v3_models_new/（按顶层目录归并，不重复拷）
+#   · 跟 git 里已提交的那版索引对比，算出"已消失"
+#   · 把上面的计划打成一行 JSON 交给工作流
+# 工作流只保留必须靠外部命令的三件事：`zip` 打包、`gh` 发 Release、`git` 提交。
+#
+# ⚠️ 这里原本有一大段内联 bash（find + comm + awk 归并 + 内联 python 做 diff），
+#    现在全挪进脚本了 —— 目录名带空格/中文/多层嵌套时，bash 里每加一个引号
+#    就是一次踩坑（旧版的 awk 归并还会把同组多个新增模型重复复制好几遍）。
+#
+# 一轮下来发生的事：
+#   1. `python3 models_tool.py -job release | tee plan.json`
+#        · 准备 live2d_v3_models_new/（只含新增模型）
+#        · 重写根目录 models.json（新的一份就是下一轮的基线）
+#   2. 读 plan.json 最后一行 JSON → total / new / gone / 新模型清单
+#   3. 打包 all.zip（全部模型）/ new.zip（仅本轮新增）
+#   4. 发 Release，并就地刷新 models-latest 固定指针
+#   5. 提交 models.json —— 这一步就是"基线回写"
+#
+# ⚠️ 基线文件是 models.json（不再是 models.txt），一物两用：
+#      页面靠它发现模型，发布流程靠它做增量。别再往仓库里塞第二份清单。
+# ⚠️ "回写基线"失败 = 下一轮会把这批模型再当成新增重发一遍，
+#      所以下面的 push 有重试、最终失败直接让 run 变红（不静默吞）。
+# ⚠️ 首次运行（仓库里没有 models.json）只建索引、不发布也不复制：
+#      没有基线时全部模型都会被判成新增，发一个名叫 new 却装着全部的包毫无意义。
 
 # ── 触发 ────────────────────────────────────────────────────────────────
 # 「每隔 7 天」在 GitHub 的 cron 里写不出来：它只有 分/时/日/月/星期 五个字段，
@@ -22,22 +51,29 @@ on:
         default: '0'
 
 permissions:
-  contents: write                # 建 Release 需要；回写 models.txt 也需要
+  contents: write                # 建 Release 需要；回写 models.json 也需要
 
-# 同一时间只跑一个，后来的排队等 —— 否则两个 run 会读到同一份 models.txt 重复发布
+# 同一时间只跑一个，后来的排队等 —— 否则两个 run 会读到同一份 models.json 重复发布
 concurrency:
-  group: live2d3-models-release
+  group: live2d-v3-models-release
   cancel-in-progress: false
 
 jobs:
-  check-and-publish:
+  index-and-publish:
     runs-on: ubuntu-latest
 
     env:
       FORCE: ${{ github.event.inputs.force_publish == 'true' }}
+      # 模型名里大量中文/日文（Azue Lane(JP)、用户上传…）。GitHub runner 的
+      # 默认 locale 是 C.UTF-8，Python 在 C locale 下 stdout 会退化成 ASCII，
+      # print 一个中文模型名就 UnicodeEncodeError。脚本自己 reconfigure 了
+      # stdout，这里再加一层环境变量兜底（子进程/异常回溯也一起受益）。
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: 'utf-8'
+      LANG: C.UTF-8
 
     steps:
-      # 闸门刻意放在最前面、且不做 checkout —— 不到日子就不克隆这 200MB 的仓库
+      # 闸门刻意放在最前面、且不做 checkout —— 不到日子就不克隆这个两百多兆的仓库
       - name: 7 天闸门
         id: gate
         run: |
@@ -59,77 +95,50 @@ jobs:
         if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@v4
 
-      # ── 扫描：模型 = 目录里至少有一个 .moc3，记录它相对 models/ 的路径 ──
-      # 仓库实际是两层：models/<分类>/<模型>/xxx.moc3
-      #   → 记录 "Azue Lane(JP)/aidang_2" 这样的相对路径；分类目录本身没有 .moc3，
-      #     不会误判成模型。
-      # 全程 NUL 分隔：路径里有空格（Azue Lane(JP)）和中文（用户上传），
-      # 用换行分隔会把它们切成两半。
-      - name: 扫描模型目录
-        id: scan
+      # ── 扫描 / 增量识别 / 复制新增：全在 models_tool.py 里 ────────────
+      - name: 生成索引并准备新增模型
+        id: build
         if: steps.gate.outputs.run == 'true'
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
-          TMP="${RUNNER_TEMP:-/tmp}"
 
-          if [ ! -d models ]; then
-            echo "::error::仓库里没有 models/ 目录"
-            exit 1
-          fi
+          # 脚本最后一行打一行 JSON（人类可读日志照常进 CI 日志）。
+          # tee 存一份给后面几个步骤读 —— 不解析人类可读输出，省得改日志就把工作流带崩。
+          python3 models_tool.py -job release | tee "$RUNNER_TEMP/plan.json"
+          plan=$(tail -n 1 "$RUNNER_TEMP/plan.json")
 
-          find models -type f -name '*.moc3' -printf '%h\0' \
-            | sed -z 's|^models/||' \
-            | LC_ALL=C sort -z -u \
-            | tr '\0' '\n' > "$TMP/current.txt"
+          # 一条命令把 JSON 字段写进 $GITHUB_OUTPUT（runner 自带 python，不必依赖 jq）
+          # ⚠️ 布尔要显式转成小写 'true'/'false'：Python 的 str(True) 是 'True'，
+          #    而后面步骤判的是 `== 'true'`，直接写进去首次运行那条分支永远不生效。
+          python3 - "$plan" <<'PY' >> "$GITHUB_OUTPUT"
+          import json, sys
+          p = json.loads(sys.argv[1])
+          for k in ('total', 'new', 'gone'):
+              print('%s=%s' % (k, p[k]))
+          print('first=%s' % ('true' if p['first'] else 'false'))
+          PY
 
-          # models.txt 不存在 → 首次运行：直接拿当前列表当基线，不发布。
-          # （否则 43 个存量模型会被全当成"新增"，发一个名叫 new 却装着全部旧模型的包）
-          first=false
-          if [ ! -f models.txt ]; then
-            echo "models.txt 不存在 → 首次运行，创建并写入当前清单作为基线"
-            : > models.txt
-            first=true
-          fi
-
-          # 归一化：去 CR、去空行；两侧都按 LC_ALL=C 排序，comm 才准
-          # （Windows 上编辑过的文件会带 CRLF，不处理会永远比不上）
-          #
-          # ⚠️ 过滤空行**不能**用 `grep -v '^[[:space:]]*$'`：
-          #    grep 在「一行都没匹配到」时退出码是 1 —— 包括**输入本身为空**的情况。
-          #    配上 pipefail，这个 1 会变成整条管道的失败，set -e 立刻终止 step。
-          #    首次运行时 models.txt 正是刚 `: >` 出来的空文件，必踩：
-          #    脚本会在打印完「创建基线」之后静悄悄挂掉，退出码 1，后面一句输出都没有。
-          #    sed 的 d 命令对空输入照样返回 0，用它。
-          sed -e 's/\r$//' -e '/^[[:space:]]*$/d' models.txt \
-            | LC_ALL=C sort -u > "$TMP/recorded.txt"
-
-          LC_ALL=C comm -13 "$TMP/recorded.txt" "$TMP/current.txt" > "$TMP/new.txt"
-          LC_ALL=C comm -23 "$TMP/recorded.txt" "$TMP/current.txt" > "$TMP/gone.txt"
-
-          total=$(wc -l < "$TMP/current.txt")
-          if [ "$first" = "true" ]; then
-            new=0
-            : > "$TMP/new.txt"
-          else
-            new=$(wc -l < "$TMP/new.txt")
-          fi
-          gone=$(wc -l < "$TMP/gone.txt")
-
-          echo "total=$total" >> "$GITHUB_OUTPUT"
-          echo "new=$new" >> "$GITHUB_OUTPUT"
-          echo "gone=$gone" >> "$GITHUB_OUTPUT"
-          echo "first=$first" >> "$GITHUB_OUTPUT"
-
-          echo "仓库现有模型 $total 个，models.txt 记录 $(wc -l < "$TMP/recorded.txt") 个"
-          echo "新增 $new 个，已消失 $gone 个"
-          if [ "$new" -gt 0 ]; then
-            sed 's/^/  新增: /' "$TMP/new.txt"
-          fi
-          if [ "$gone" -gt 0 ]; then
-            echo "::warning::models.txt 里有 $gone 条记录在当前仓库中已不存在"
-            sed 's/^/  已消失: /' "$TMP/gone.txt"
-          fi
+          # 生成的 Release 说明正文；步骤汇总也复用它
+          python3 - "$plan" <<'PY' > "$RUNNER_TEMP/plan.md"
+          import json, sys
+          p = json.loads(sys.argv[1])
+          if p['new_models']:
+              print('## 新增模型（%d 个）' % p['new'])
+              print()
+              for m in p['new_models']:
+                  print('- %s' % m)
+              print()
+          elif not p['first']:
+              print('_本轮无新增模型。_')
+              print()
+          if p['gone_models']:
+              print('## 已消失（%d 个）' % p['gone'])
+              print()
+              for m in p['gone_models']:
+                  print('- %s' % m)
+              print()
+          PY
 
       # ── 打包：两份 zip，内部都保留 models/ 顶层目录，解到仓库根即可 ──
       - name: 打包
@@ -138,9 +147,8 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
-          TMP="${RUNNER_TEMP:-/tmp}"
 
-          if [ "${{ steps.scan.outputs.new }}" = "0" ] && [ "$FORCE" != "true" ]; then
+          if [ "${{ steps.build.outputs.new }}" = "0" ] && [ "$FORCE" != "true" ]; then
             echo "没有新增模型，且未勾选强制发布 → 不打包"
             echo "published=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -151,16 +159,21 @@ jobs:
 
           echo "打包全量包 …"
           # -X：不写入 UID/GID 等 Unix 扩展属性，免得在不同系统上解压出怪权限
-          zip -r -q -X live2d_3_models_all.zip models
+          zip -r -q -X live2d_v3_models_all.zip models
 
-          if [ -s "$TMP/new.txt" ]; then
+          # 增量包：models_tool.py 已把新增模型按**原层级**复制进 live2d_v3_models_new/
+          # （即它已经是 models/ 内部的形状），这里只给它套一层 models/ 顶层目录，
+          # 好让两个包的解压方式完全一致：都解到仓库根。
+          # ⚠️ 直接 `zip -r new.zip live2d_v3_models_new` 会让解压出来多一层
+          #    live2d_v3_models_new/，用户得自己再挪一遍。
+          # ⚠️ zip 的输出用**绝对路径**：某些 zip 构建对带 .. 的相对路径会报
+          #    `Could not create output file`。
+          if [ "${{ steps.build.outputs.new }}" != "0" ]; then
             echo "打包增量包 …"
-            args=()
-            while IFS= read -r rel; do
-              [ -n "$rel" ] || continue
-              args+=("models/$rel")
-            done < "$TMP/new.txt"
-            zip -r -q -X live2d_3_models_new.zip "${args[@]}"
+            rm -rf _pack_new
+            mkdir -p _pack_new/models
+            cp -a live2d_v3_models_new/. _pack_new/models/
+            ( cd _pack_new && zip -r -q -X "$GITHUB_WORKSPACE/live2d_v3_models_new.zip" models )
             echo "has_new_zip=true" >> "$GITHUB_OUTPUT"
           else
             echo "没有新增模型（强制发布），跳过增量包"
@@ -168,7 +181,7 @@ jobs:
           fi
 
           echo "published=true" >> "$GITHUB_OUTPUT"
-          ls -lh live2d_3_models_*.zip
+          ls -lh live2d_v3_models_*.zip
 
       # ── 发布：用 runner 自带的 gh CLI，不再引第三方 action ──
       - name: 发布 Release
@@ -179,40 +192,35 @@ jobs:
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
-          TMP="${RUNNER_TEMP:-/tmp}"
+          notes="$RUNNER_TEMP/notes.md"
 
-          # tag 带上 run_id：同一秒内触发两次也不会撞
-          tag="models-$(date -u +%Y%m%d)"
-          new_count="${{ steps.scan.outputs.new }}"
+          # ⚠️ tag 必须带 run number：只写日期的话同一天手动触发两次会撞名，
+          #    `gh release create` 直接报 already exists 挂掉。
+          #    回收 step 的正则也依赖这个形状：models-<8位日期>-<数字>。
+          tag="models-$(date -u +%Y%m%d)-${GITHUB_RUN_NUMBER}"
 
+          cat "$RUNNER_TEMP/plan.md" > "$notes"
           {
-            echo "## 新增模型（${new_count} 个）"
-            echo
-            if [ -s "$TMP/new.txt" ]; then
-              sed 's/^/- /' "$TMP/new.txt"
-            else
-              echo "_（无新增；本次为手动触发的全量包）_"
-            fi
-            echo
             echo "| 文件 | 内容 |"
             echo "|---|---|"
-            echo '| `live2d_3_models_all.zip` | `models/` 全部 '"${{ steps.scan.outputs.total }}"' 个模型 |'
+            echo '| `live2d_v3_models_all.zip` | `models/` 全部 '"${{ steps.build.outputs.total }}"' 个模型 |'
             if [ "${{ steps.pack.outputs.has_new_zip }}" = "true" ]; then
-              echo '| `live2d_3_models_new.zip` | 仅本次新增的 '"${new_count}"' 个模型 |'
+              echo '| `live2d_v3_models_new.zip` | 仅本次新增的 '"${{ steps.build.outputs.new }}"' 个模型 |'
             fi
             echo
             # ⚠️ 这一句必须用**单引号**：双引号里反引号是命令替换，
             #    `models/` 会被 bash 拿去当命令执行（失败、返回空），
             #    于是 Release 说明里那几个字就凭空消失了。
             echo '> 两个包内部都带 `models/` 顶层目录，**解压到仓库根目录**即可。'
-          } > "$TMP/notes.md"
+            echo '> `models.json` 由 `models_tool.py` 生成并随仓库分发，包内不含。'
+          } >> "$notes"
 
-          files=(live2d_3_models_all.zip)
+          files=(live2d_v3_models_all.zip)
           if [ "${{ steps.pack.outputs.has_new_zip }}" = "true" ]; then
-            files+=(live2d_3_models_new.zip)
+            files+=(live2d_v3_models_new.zip)
           fi
 
-          gh release create "$tag" --title "$tag" --notes-file "$TMP/notes.md" "${files[@]}"
+          gh release create "$tag" --title "$tag" --notes-file "$notes" "${files[@]}"
 
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "已发布 $tag"
@@ -222,46 +230,43 @@ jobs:
           # 那期间下载链接是 404。代价是 models-latest 的 created_at 停在首次创建那天，
           # GitHub 的「Latest」徽标会落在最新那个时间戳 release 上。
           # 但两者是同一轮发布的同一批资产，所以下面两个地址指向同样的包：
-          #   /releases/download/models-latest/live2d_3_models_all.zip   ← tag 写死
-          #   /releases/latest/download/live2d_3_models_all.zip          ← GitHub 自动
+          #   /releases/download/models-latest/live2d_v3_models_all.zip   ← tag 写死
+          #   /releases/latest/download/live2d_v3_models_all.zip          ← GitHub 自动
           latest="models-latest"
           {
-            cat "$TMP/notes.md"
+            cat "$notes"
             echo
             echo "---"
             echo '本 Release 是**最新快照**，每次发布都会被覆盖（tag 固定为 `models-latest`）。'
             echo '固定下载地址：'
             echo '```'
-            echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${latest}/live2d_3_models_all.zip"
+            echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${latest}/live2d_v3_models_all.zip"
             echo '```'
             echo
             echo "本次来源：\`${tag}\`（run ${GITHUB_RUN_ID}）"
-          } > "$TMP/notes_latest.md"
+          } > "$RUNNER_TEMP/notes_latest.md"
 
-          # ⚠️ date 的格式串必须整体加引号：里面有空格，不加会被拆成多个操作数，
-          #    报 `extra operand` 并返回 1。而 `x=$(cmd)` 这种赋值语句的退出码就是
-          #    cmd 的退出码 —— set -e 会当场终止脚本，下面整块 latest 都不会执行。
-          title_latest="latest"
           if gh release view "$latest" >/dev/null 2>&1; then
             echo "更新 latest 指针 …"
             gh release upload "$latest" "${files[@]}" --clobber
-            gh release edit "$latest" --title "$title_latest" --notes-file "$TMP/notes_latest.md"
-            # 这一轮没出增量包，就把 latest 上上一轮残留的 new.zip 摘掉，
+            gh release edit "$latest" --title "latest" --notes-file "$RUNNER_TEMP/notes_latest.md"
+            # 这一轮没出增量包，就把 latest 上残留的 new.zip 摘掉，
             # 免得它一直挂着一个早已不是「新增」的包
             if [ "${{ steps.pack.outputs.has_new_zip }}" != "true" ]; then
-              gh release delete-asset "$latest" live2d_3_models_new.zip --yes 2>/dev/null || true
+              gh release delete-asset "$latest" live2d_v3_models_new.zip --yes 2>/dev/null || true
             fi
           else
             echo "首次创建 latest 指针 …"
-            gh release create "$latest" --title "$title_latest" --notes-file "$TMP/notes_latest.md" "${files[@]}"
+            gh release create "$latest" --title "latest" --notes-file "$RUNNER_TEMP/notes_latest.md" "${files[@]}"
           fi
 
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
 
       # ── 可选回收：默认 0 = 一个都不删 ──
-      # 每份 all.zip ≈ models/ 的体积（43 个模型 ~211MB），一年 52 轮 ≈ 11GB，
+      # 每份 all.zip ≈ models/ 的体积（45 个模型 ~200MB+），一年 52 轮 ≈ 11GB，
       # 迟早撑爆仓库配额。想自动回收，手动触发时把 prune_keep 填成要保留的个数。
-      # 定时触发永远不会走到这里（prune_keep 默认 '0'）。
+      # ⚠️ 定时触发时 inputs 是 null，而 `null != '0'` 求值为 true —— 这条 if 挡不住。
+      #    真正拦住的是下面 case 的第一支。两道都要留着。
       - name: 回收旧 Release（可选）
         if: steps.gate.outputs.run == 'true' && github.event.inputs.prune_keep != '0'
         env:
@@ -272,10 +277,12 @@ jobs:
           case "$keep" in ''|*[!0-9]*) echo "prune_keep 不是数字（$keep），跳过"; exit 0 ;; esac
           [ "$keep" -gt 0 ] || exit 0
 
-          # ⚠️ 这里的正则必须**只匹配时间戳 tag**（models-20260920-35520451206），
-          #   不能写成 `grep '^models-'` —— 那会把固定指针 `models-latest` 也圈进来删掉。
-          # gh release list 默认按创建时间倒序，前 keep 个就是最新的
-          mapfile -t tags < <(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -E '^models-[0-9]{8}$' || true)
+          # ⚠️ 正则必须**只匹配带时间戳的 tag**（models-20260922-123），
+          #    写成 `grep '^models-'` 会把固定指针 `models-latest` 也圈进来删掉。
+          #    gh release list 默认按创建时间倒序，前 keep 个就是最新的。
+          #    `|| true` 是给 grep 兜底：一条都没匹配到时它退出码是 1，
+          #    配 set -euo pipefail 会让整步失败（mapfile 那行的失败尤其难看出原因）。
+          mapfile -t tags < <(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -E '^models-[0-9]{8}-[0-9]+$' || true)
           if [ "${#tags[@]}" -le "$keep" ]; then
             echo "现有 ${#tags[@]} 个 Release，未超过保留数 $keep，不回收"
             exit 0
@@ -285,46 +292,61 @@ jobs:
             gh release delete "$t" --yes --cleanup-tag
           done
 
-      # ── 回写 models.txt：无论发没发布都要同步，否则基线永远建不起来 ──
-      - name: 回写 models.txt
+      # ── 回写基线：无论发没发布都要提交，否则下一轮会把老模型当新增重发 ──
+      - name: 提交 models.json
         if: steps.gate.outputs.run == 'true'
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
-          TMP="${RUNNER_TEMP:-/tmp}"
-          cp "$TMP/current.txt" models.txt
 
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add models.txt
+          git add models.json
           if git diff --cached --quiet; then
-            echo "models.txt 无变化，不提交"
-          else
-            git commit -m "chore(models): 同步模型清单（$(wc -l < models.txt) 个）"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
-            echo "已提交并推送 models.txt"
+            echo "models.json 无变化，不提交"
+            exit 0
           fi
+
+          git commit -m "chore(models): 刷新 models.json（${{ steps.build.outputs.total }} 个模型）"
+
+          # ⚠️ 这一步失败是有后果的：基线没更新，下一轮会把这批模型再当成"新增"
+          #    重发一遍。所以失败要重试，且最终失败必须让 run 变红，不能静默放过。
+          #    （并发已被 concurrency 挡住，这里防的是"跑的过程中仓库被推了新提交"。）
+          pushed=false
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              pushed=true
+              break
+            fi
+            echo "::warning::推送失败（第 ${attempt} 次），rebase 后重试"
+            git pull --rebase --autostash origin "${GITHUB_REF_NAME}" || true
+          done
+          if [ "$pushed" != "true" ]; then
+            echo "::error::models.json 推送失败 —— 基线没更新，下一轮会把这批模型再当成新增重发一遍"
+            exit 1
+          fi
+          echo "已提交并推送 models.json"
 
       - name: 汇总
         if: steps.gate.outputs.run == 'true'
         run: |
           {
-            echo "### 模型检查（run ${{ github.run_id }}）"
+            echo "### 模型索引与发布（run ${{ github.run_id }}）"
             echo
-            echo "- 现有模型：${{ steps.scan.outputs.total }} 个"
-            if [ "${{ steps.scan.outputs.first }}" = "true" ]; then
-              echo "- **首次运行**：已把当前 ${{ steps.scan.outputs.total }} 个模型写入 models.txt 作为基线，未发布"
-              echo "  （想立刻发一份全量包，手动触发并勾选 force_publish）"
+            echo "- 现有模型：${{ steps.build.outputs.total }} 个"
+            if [ "${{ steps.build.outputs.first }}" = "true" ]; then
+              echo "- **首次运行**：仓库里没有 models.json，本轮只生成索引作为基线，未发布"
+              echo "  （想立刻发一份全量包：手动触发并勾选 force_publish）"
             else
-              echo "- 新增模型：${{ steps.scan.outputs.new }} 个"
-              echo "- 已消失模型：${{ steps.scan.outputs.gone }} 个"
+              echo "- 新增模型：${{ steps.build.outputs.new }} 个"
+              echo "- 已消失模型：${{ steps.build.outputs.gone }} 个"
               if [ "${{ steps.pack.outputs.published }}" = "true" ]; then
                 echo "- 已发布 Release：${{ steps.release.outputs.tag }}"
                 echo
                 echo "两个固定下载地址（内容相同，都是本轮这批资产）："
                 echo '```'
-                echo "https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.latest }}/live2d_3_models_all.zip"
-                echo "https://github.com/${{ github.repository }}/releases/latest/download/live2d_3_models_all.zip"
+                echo "https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.latest }}/live2d_v3_models_all.zip"
+                echo "https://github.com/${{ github.repository }}/releases/latest/download/live2d_v3_models_all.zip"
                 echo '```'
               else
                 echo "- 无新增，未发布"

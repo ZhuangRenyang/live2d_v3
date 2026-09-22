@@ -1,0 +1,30 @@
+{
+	"Version": 3,
+	"FileReferences": {
+		"Moc": "Celeste.moc3",
+		"Textures": [
+			"Celeste.8192/texture_00.png",
+			"Celeste.8192/texture_01.png",
+			"Celeste.8192/texture_02.png",
+			"Celeste.8192/texture_03.png"
+		],
+		"Physics": "Celeste.physics3.json",
+		"DisplayInfo": "Celeste.cdi3.json",
+		"Pose": "Celeste.pose3.json"
+	},
+	"Groups": [
+		{
+			"Target": "Parameter",
+			"Name": "EyeBlink",
+			"Ids": [
+				"ParamEyeLOpen",
+				"ParamEyeROpen"
+			]
+		},
+		{
+			"Target": "Parameter",
+			"Name": "LipSync",
+			"Ids": []
+		}
+	]
+}

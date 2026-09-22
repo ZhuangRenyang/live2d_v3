@@ -15,3 +15,18 @@ tmp/
 _regress.js
 _probe_*.js
 _diag_*.js
+
+# models_tool.py -job release 的产物 / 打包产物
+# （本机跑一次 -job release 也会在根目录生成，别让它们混进提交；
+#   工作流在 CI 里跑同样的东西，那边不会提交，只是保持两边一致）
+live2d_v3_models_new/
+live2d_v3_models_*.zip
+
+# 模型目录里的临时 / 非必需文件 —— 预览页一个都用不到，
+# 但它们会混进「下载模型」打出来的 zip 和订阅包，白白撑大体积。
+# 放进 models/ 只是本机调试用的，不该进仓库。
+# ⚠️ 只针对 models/ 下的，别写成全局 *.zip —— 那会把别处要提交的 zip 一起忽略掉。
+models/**/*.bak
+models/**/*.zip
+models/**/*.hidden.json
+models/**/*.vtube.json
