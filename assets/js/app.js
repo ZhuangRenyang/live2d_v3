@@ -511,6 +511,10 @@
   //    而模型的几十个文件全取不到」。实测（探针 F 组）：这种情况下列表能列出来全部模型，
   //    但**每一个都载入失败**，而且永远死钉在当前源上、不会自己去用另一个源 —— 页面看着像坏了。
   //    所以模型资源失败时要能再切一次。
+  //
+  // ⚠️⚠️ 切过去之后**必须把新源提到候选表第一位**（`promoteModelsBase`）——
+  //    否则会出现「S_modelsBase 已经是加速、cands[0] 还是 raw」这种表里不一，
+  //    下一次点模型时 `fetchWithFallback` 又从 cands[0] 的 raw 试起。见 promoteModelsBase。
   function advanceModelsBase() {
     if (!S_baseCandidates.length) return false;        // 本机同源模式，没别的可切
     var i = S_baseCandidates.indexOf(S_modelsBase);
@@ -518,7 +522,31 @@
     if (i + 1 >= S_baseCandidates.length) return false; // 已经是最后一个候选
     S_modelsBase = S_baseCandidates[i + 1];
     S_baseName = baseName(S_modelsBase);
+    // ⚠️ 顺手把新源提到最前 —— 否则候选表与「当前生效源」失配（见函数上方说明）
+    promoteModelsBase(S_modelsBase);
     console.warn('[viewer] 模型资源取不到，切到备用源：' + S_modelsBase);
+    return true;
+  }
+
+  // 把某个已在候选表里的基址**提到第一位**，让「cands[0] === 当前生效源」永远成立。
+  //
+  // ⚠️⚠️ 为什么需要这个不变量：`fetchWithFallback` 是**按 cands 的顺序**依次试的
+  //    （`attempt(0)` 先打 cands[0]）。而模型文件的载入走的是 `fetchJSON(manifestUrl)`
+  //    —— **完全不经过 fetchWithFallback**，也就是说走 `modelsUrl()` 拼出来的
+  //    `S_modelsBase`。两条路径对「当前该用哪个源」的判断必须一致：
+  //      · 拼 URL（modelsUrl）    → 读 S_modelsBase
+  //      · 读清单（fetchWithFallback）→ 读 cands[0]
+  //    一旦 S_modelsBase 被 advanceModelsBase 换成备源、而 cands 没跟着调序，
+  //    两者就分叉了：**清单走加速、模型文件却还从 raw 试起**。
+  //    症状（rain 2026-09-23 反馈）：弹窗里明明选了加速，点模型时第一跳仍打 raw。
+  //
+  // 返回是否真的动过顺序。
+  function promoteModelsBase(base) {
+    if (!base || !S_baseCandidates.length) return false;
+    var i = S_baseCandidates.indexOf(base);
+    if (i <= 0) return false;                          // 不在表里 / 本来就在第一位
+    S_baseCandidates.splice(i, 1);
+    S_baseCandidates.unshift(base);
     return true;
   }
 
@@ -605,6 +633,10 @@
     S_baseName = baseName(next);
     // 候选表按新源重建（保留同一分支的另一源作为兜底）
     pinBranch(next);
+    // ⚠️ 再兜一道：pinBranch 的 accelFirst 是按传进去的 base 判的，语义上应该已经对；
+    //    但「cands[0] === S_modelsBase」是两条取源路径（拼 URL / 试清单）的共同前提，
+    //    这里显式钉一次，免得将来 pinBranch 改动把它再度拽偏（见 promoteModelsBase 注释）。
+    promoteModelsBase(next);
     console.warn('[viewer] 数据源已切换：' + prev + ' → ' + next);
     return true;
   }
