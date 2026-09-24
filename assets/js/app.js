@@ -16,8 +16,16 @@
   // 代价：页面在 gh-pages 上，模型在 master 上，必须走**绝对地址**（跨分支）。
   // 本地开发（http://localhost）时模型就在旁边，继续走相对路径，免得白绕一圈网络。
   //
-  // 源策略（2026-09-23 rain 拍板，**不用 jsDelivr 了**）：
-  //   · 默认 —— raw.githubusercontent.com，GitHub 官方原始地址
+  // 源策略（2026-09-24 更新：同源优先；2026-09-23 rain 拍板不用 jsDelivr 了）：
+  //   · 默认 —— **同源**：整仓部署（Vercel / Netlify / CF Pages 把 master 直接发上去）
+  //             时 models/ 就在部署产物里，模型由托管方边缘 CDN 直出。
+  //             此前「部署了还是慢」的根因正是：页面在 Vercel，模型却跨洋去 raw
+  //             逐个小文件拉（DNS 污染 + 429 限速 + 5 分钟缓存）。
+  //             同源命中清单后会先「验明正身」（sameOriginServesModel）：
+  //             gh-pages 这类壳分支也带一份 models.json 兜底副本，但它**没有
+  //             models/**、清单可能滞后 —— 验不过就自动把同源除名，落回
+  //             下面的顺序，清单永远读 master、永远新鲜。
+  //   · 次选 —— raw.githubusercontent.com，GitHub 官方原始地址
   //   · 兜底 —— 一个「加速地址」。所谓加速地址是个**前缀代理**：
   //               加速地址 + 原始 GitHub 绝对地址
   //             例：https://gh-proxy.org/https://raw.githubusercontent.com/o/r/master/x
@@ -141,18 +149,28 @@
   //    的那次成功一定落在**第一个源**上，收窄后的候选表天然就是 [主, 备] 两项。
   //    反过来排（分支在外层）会让主源挂掉时那唯一一次重试撞到备源@master 的 404。
   //
-  // ⚠️ 默认「GitHub 原始地址主、加速地址备」（2026-09-23 rain 要求）：
-  //    raw 是国内访问的老大难（慢 + 批量请求 429），所以给一个加速兜底；
-  //    但**默认不主动用第三方**，只有 raw 真拉不到时才切过去。
-  //    加速站由使用者自己在下拉里选（存 localStorage），没选过就直接用内置第一个。
+  // ⚠️⚠️ 同源（''）排第一（2026-09-24）：整仓部署时 models/ 就在部署产物里，
+  //    模型该吃托管方的边缘 CDN —— 跨洋去 raw 拉几十个小文件是「部署了还是慢」
+  //    的根因。壳分支（gh-pages）没有 models/，同源 404 后自动落到 raw，行为与
+  //    旧版一致；清单层还有一道验真闸门（discoverFromIndex → sameOriginServesModel），
+  //    防止壳上那份可能滞后的 models.json 副本被误当成可用的同源源。
+  //    ⚠️ 同源胜出后 pinBranch 收不了窄（S_branchByBase[''] 不存在），候选表
+  //    保持「同源 + raw/accel 双分支」原样 —— 同源半死时仍有完整的兜底链。
+  //
+  // ⚠️ raw 仍是外部源里的主源（2026-09-23 rain 要求）：raw 是国内访问的老大难
+  //    （慢 + 批量请求 429），所以给一个加速兜底；但**默认不主动用第三方**，
+  //    只有 raw 真拉不到时才切过去。加速站由使用者自己在下拉里选（存
+  //    localStorage），没选过就直接用内置第一个。
   function buildBaseCandidates() {
     if (isLocalHost()) return [];
     initAccelBase();
     var q = '';
     try { q = (new URLSearchParams(location.search).get('src') || '').toLowerCase(); } catch (e) {}
     // 兼容老写法：?src=raw 等同 github，?src=cdn 在 jsDelivr 下线后无意义 → 当作默认
+    // ?src=local —— 只试同源、不兜底：排查部署问题时的对照开关（正常用户用默认就好）
     if (q === 'raw' || q === 'github') S_forcedSrc = 'github';
     else if (q === 'accel' || q === 'cdn') S_forcedSrc = 'accel';
+    else if (q === 'local' || q === 'same') S_forcedSrc = 'local';
     else S_forcedSrc = '';
 
     var out = [];
@@ -175,7 +193,9 @@
 
     if (S_forcedSrc === 'github') { addRaw(); return out; }
     if (S_forcedSrc === 'accel') { addAccel(); return out; }
-    addRaw(); addAccel();          // 默认 github 主、加速备
+    if (S_forcedSrc === 'local') { return ['']; }
+    out.push('');                  // 同源第一（见函数头注释）
+    addRaw(); addAccel();          // raw 主、加速备
     return out;
   }
 
@@ -550,6 +570,17 @@
     return true;
   }
 
+  // 把同源（''）从候选表里**除名**。用于「验明正身」失败（sameOriginServesModel）：
+  // 壳分支（gh-pages）带着 models.json 副本却没有 models/ —— 同源对**清单**可用、
+  // 对**模型文件**不可用，留着它清单就会读到滞后副本。删掉后 S_modelsBase 不动，
+  // 下一次 fetchRepoJSON 会按表内顺序落到 raw 上、重新钉源。
+  function dropSameOrigin() {
+    var i = S_baseCandidates.indexOf('');
+    if (i < 0) return false;
+    S_baseCandidates.splice(i, 1);
+    return true;
+  }
+
   // 分支探明之后，把候选表收窄成「同一分支的原始地址 + 加速地址」。
   //
   // ⚠️⚠️ 为什么必须收窄：switchModel 载入失败时，每个模型**只给一次**换源重试
@@ -557,6 +588,9 @@
   //    会撞到同源的 main 分支 —— 同样不可用 —— 于是直接放弃，反而比改造前
   //    更差（那时下一项就是另一个源）。收窄之后「重试一次 = 换一个源」，
   //    语义与改造前完全一致。
+  // ⚠️ 同源（''）胜出时走不到收窄 —— S_branchByBase[''] 不存在，`if (!br) return`
+  //    让候选表保持「同源 + raw/accel 双分支」原样：同源半死时仍有完整的
+  //    raw（master/main）→ 加速站兜底链，这正是想要的形态。
   function pinBranch(base) {
     var br = S_branchByBase[base];
     if (!br) return;
@@ -666,10 +700,41 @@
   // ⚠️ 它是「清单」—— 与页面同源发布只是历史巧合：模型分离后它跟模型一起留在
   //    master，页面从外部基址取。**它是「新增模型能否被看到」的关键**：
   //    模型文件传上去、清单没更新的话，页面列表里根本不会出现它。
+  //
+  // ---------- 同源验真（2026-09-24） ----------
+  // 同源命中清单 ≠ 同源可用：壳分支（gh-pages）同样带一份 models.json 兜底副本
+  // （可能滞后于 master），但它没有 models/。只验清单会把整站引向一份旧列表，
+  // 直接违背上面「清单必须永远新鲜」的原则。所以同源胜出后，拿清单里第一个
+  // 模型文件试一发 GET 验明正身：验不过就把同源除名（dropSameOrigin），按
+  // 剩下的源重读一遍 —— 会落到 raw，拿到 master 的最新清单。
+  // ⚠️ 本机模式候选表为空、?src=local 是用户自己强制的，都不进这道闸门。
+  function sameOriginServesModel(list) {
+    var probe = null;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].path && list[i].file) { probe = list[i]; break; }
+    }
+    if (!probe) return Promise.resolve(true);   // 清单里挑不出可探测的条目 → 只能信同源
+    // ⚠️ 路径形状必须和真实加载一致（switchModel L1157 那套）：带 'models/' 前缀，
+    //    否则部署产物明明有模型也会被判成壳部署。
+    return fetch(modelsUrl('models/' + probe.path + '/' + probe.file)).then(function (r) {
+      return !!r.ok;
+    }, function () {
+      return false;
+    });
+  }
+
   function discoverFromIndex() {
     return fetchRepoJSON('models.json').then(function (d) {
       var list = (d && d.models) || [];
       if (!list.length) throw new Error('models.json 为空');
+      if (S_modelsBase === '' && S_baseCandidates.length && S_forcedSrc !== 'local') {
+        return sameOriginServesModel(list).then(function (ok) {
+          if (ok) return list;
+          if (!dropSameOrigin() || !S_baseCandidates.length) return list;   // 删无可删（防御）：信同源
+          console.warn('[viewer] 同源没有模型文件（壳部署），清单改从外部源读取');
+          return discoverFromIndex();
+        });
+      }
       return list;
     });
   }
@@ -812,10 +877,11 @@
     // 顺序已经由 visibleModels() 定好（组名升序、顶层最后），这里只管画
     var matched = visibleModels();
 
-    // 来源标注：清单从哪来 + 模型从哪个源取（GitHub 原始 / 加速地址 / 本机）。
-    // 分离部署后「模型来自外部 CDN」是件用户该看得见的事 —— 出问题时一眼知道该查谁。
+    // 来源标注：清单从哪来 + 模型从哪个源取（同源 / GitHub 原始 / 加速地址 / 本机）。
+    // 分离部署后「模型来自哪个 CDN」是件用户该看得见的事 —— 出问题时一眼知道该查谁。
+    // 部署态的同源不再是「本机」：标「同源」，和 localhost 那种零网络模式区分开。
     var srcLabel = { index: 'models.json', fallback: '内置清单' }[S.source] || '';
-    var baseTag = { github: 'GitHub', accel: '加速', local: '' }[S_baseName] || '';
+    var baseTag = { github: 'GitHub', accel: '加速', local: isLocalHost() ? '' : '同源' }[S_baseName] || '';
     var tag = [srcLabel, baseTag].filter(Boolean).join(' · ');
     els.modelCount.textContent = kw
       ? matched.length + ' / ' + S.models.length + ' 个'
@@ -2025,8 +2091,17 @@
     var snapAccel = normalizeAccelBase(srcSnap.accelBase);
     S_accelBase = snapAccel || S_accelBase;
     if (S_modelsBase !== srcSnap.base) {
-      if (srcSnap.baseName === 'accel' && snapAccel) moved = repinModelsBase('accel', snapAccel);
-      else moved = repinModelsBase('github');
+      // ⚠️ 快照是同源（部署态，baseName 'local'）：repin 只认 github/accel 两个
+      //    方向，回不去同源 —— 直接按快照还原现场，别硬 repin 到 raw 上。
+      if (srcSnap.baseName === 'local' || !srcSnap.base) {
+        S_modelsBase = srcSnap.base;
+        S_baseName = baseName(S_modelsBase);
+        moved = true;
+      } else if (srcSnap.baseName === 'accel' && snapAccel) {
+        moved = repinModelsBase('accel', snapAccel);
+      } else {
+        moved = repinModelsBase('github');
+      }
       // 候选表跟着还原（repin 会 pinBranch，这里再校一次更稳）
       S_baseCandidates = srcSnap.cands.slice();
     }
@@ -5703,7 +5778,9 @@
       var baseFrom = S_modelsBase
         ? (S_baseName === 'accel' ? (accelLabel(S_accelBase) || '第三方加速地址') : 'raw.githubusercontent.com') +
           (branchNow ? ' · ' + branchNow + ' 分支' : '')
-        : '本机同源（models/ 就在页面旁边）';
+        : (isLocalHost()
+            ? '本机同源（models/ 就在页面旁边）'
+            : '同源部署（models/ 随页面一起发布，走托管方 CDN）');
       els.modelCount.title = '清单来源：' + srcFrom + '\n模型来源：' + baseFrom;
 
       renderModels();
