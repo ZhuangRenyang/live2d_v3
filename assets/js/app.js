@@ -35,7 +35,10 @@
   //    该加速站的域名，区分靠 S_baseName（'github' / 'accel' / 'local'）。
   //
   // ⚠️ 改仓库名 / 用户名只改下面两行。
-  var REPO_OWNER = 'weiraing';
+  //    必须与 git remote 一致（2026-09-24 已随账户改名更新为 ZhuangRenyang）：
+  //    旧名 weiraing 靠 GitHub 重定向能苟活，但 jsDelivr / Trees API 对重定向
+  //    支持不可靠，线上自动发现（discoverFromApi）要求这里写的是当前全名。
+  var REPO_OWNER = 'ZhuangRenyang';
   var REPO_NAME  = 'live2d_v3';
 
   // 默认分支候选：GitHub 新建仓库默认 main，老仓库多是 master。**两个都试一遍**，
@@ -477,11 +480,21 @@
   }
 
   // ---------- 1. 发现模型 ----------
-  // 两级降级：
+  // 三级降级（靠前者胜，2026-09-24）：
+  //   0. API 实时清单 —— /api/models（Vercel 函数）→ 浏览器直连 GitHub Trees API
   //   A. models.json（仓库根目录，由 models_tool.py 生成；直接读文件，不限流、任意托管、离线可用）
   //   B. 内置兜底清单（A 不可用时仍能跑）
-  function fetchJSON(url) {
-    return fetch(url, { cache: 'no-cache' }).then(function (r) {
+  function fetchJSON(url, timeoutMs) {
+    var opt = { cache: 'no-cache' };
+    // timeoutMs：目录 API（/api/models、GitHub Trees）专用 —— 国内网络下
+    // api.github.com 会在 TLS 握手阶段被掐，有时表现为秒断、有时表现为长时间
+    // 挂起，没有超时的话页面会卡在「正在扫描模型…」上干等。
+    if (timeoutMs && window.AbortController) {
+      var ctl = new AbortController();
+      opt.signal = ctl.signal;
+      setTimeout(function () { ctl.abort(); }, timeoutMs);
+    }
+    return fetch(url, opt).then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + url);
       return r.json();
     });
@@ -729,6 +742,121 @@
     });
   }
 
+  // ---------- 0. 线上自动发现（2026-09-24）：清单一分钟都不该「人肉维护」 ----------
+  // models.json 的痛点：新增/删除模型后必须记得跑 python models_tool.py，忘了
+  // 新模型就「传上去了但看不见」。现在清单多出 API 层，靠前者胜：
+  //   1. 同源 /api/models —— Vercel Serverless 函数（见 api/models.js），服务端
+  //      查 GitHub 仓库树现场生成。在服务端查是因为国内访客直连 api.github.com
+  //      常被 TLS 掐断，函数从 Vercel 出网不受影响；
+  //   2. 浏览器直连 GitHub Trees API —— 没有函数的托管（GitHub Pages / 其它
+  //      静态空间）由访客自己查，能不能成看访客网络；
+  //   3. models.json + 内置清单 —— models_tool.py 的产物，从这一步起与旧行为
+  //      完全一致（同源验真、raw/加速兜底全套照旧）。它降级为兜底，不再是唯一权威。
+  // ⚠️ 清单来源和文件来源是两回事：API 只解决「列表」，「模型文件从哪个基址取」
+  //    仍要逐候选源探测（resolveFileBase，语义与清单流的同源验真一致）。
+  // ⚠️ localhost 与 ?src= 强制模式不进这条链：本地开发看的是工作区里还没 push
+  //    的模型，API 反映的是远端仓库；?src= 是排查对照开关，语义是「只试某个源」。
+
+  function trySeq(items, make) {
+    var idx = 0;
+    function next() {
+      if (idx >= items.length) return Promise.reject(new Error('没有更多候选'));
+      return make(items[idx++]).catch(next);
+    }
+    return next();
+  }
+
+  // Trees API 的扁平文件表（[{path,type,size}]）→ models.json 同构清单条目。
+  // 字段口径与 models_tool.py scan_models 完全一致，decorate() 无感知。
+  // motions / mocVersion / missing 那些要逐个打开 model3.json 才能统计的字段
+  // **故意不给**（为列个表就拉几十个文件不值得）—— 页面对缺省值有现成降级显示。
+  // （挂到 __viewer.treeMap 供自动化验证，纯函数、无副作用。）
+  function treeToEntries(tree) {
+    var out = [];
+    (tree || []).forEach(function (t) {
+      if (!t || t.type !== 'blob') return;
+      var p = String(t.path || '');
+      if (!/^models\/.+/i.test(p)) return;
+      var segs = p.split('/').slice(1);            // 去掉 'models' 段
+      var file = segs[segs.length - 1];
+      if (!/\.model3\.json$/i.test(file)) return;
+      var parts = segs.slice(0, -1);                // 相对 models/ 的目录段
+      out.push({
+        path: parts.join('/'),
+        file: file,
+        name: file.replace(/\.model3\.json$/i, ''),
+        group: parts.length > 1 ? parts.slice(0, -1).join('/') : '',
+        parts: parts,
+        size: t.size || 0
+      });
+    });
+    // 排序键与 models_tool.py 一致：(group, name) 不区分大小写升序
+    out.sort(function (a, b) {
+      var ga = a.group.toLowerCase(), gb = b.group.toLowerCase();
+      if (ga !== gb) return ga < gb ? -1 : 1;
+      var na = a.name.toLowerCase(), nb = b.name.toLowerCase();
+      return na < nb ? -1 : na > nb ? 1 : 0;
+    });
+    return out;
+  }
+
+  function tryApiList() {
+    // 1) 同源函数（Vercel 部署才有；其它托管一发 404 就过，代价一个请求）
+    return fetchJSON('api/models', 8000).then(function (d) {
+      var list = (d && d.models) || [];
+      if (!list.length) throw new Error('/api/models 返回空清单');
+      return list;
+    }).catch(function (e1) {
+      console.warn('[viewer] /api/models 不可用（' + (e1 && e1.message) + '），改试 GitHub Trees API');
+      // 2) 浏览器直连 Trees API：master 挂了再试 main
+      return trySeq(BRANCHES, function (b) {
+        return fetchJSON('https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME +
+                         '/git/trees/' + b + '?recursive=1', 8000).then(function (d) {
+          var list = treeToEntries((d && d.tree) || []);
+          if (!list.length) throw new Error(b + ' 分支下没有模型');
+          return list;
+        });
+      });
+    });
+  }
+
+  // API 只给了「清单」，模型文件的基址还没钉 —— 按候选表顺序拿第一个模型文件
+  // 试一发，谁应答谁就是 S_modelsBase。语义与清单流的 sameOriginServesModel
+  // 一致（含「同源排在最前」），探针路径形状也一致（带 models/ 前缀）。
+  function resolveFileBase(list) {
+    var probe = null;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].path && list[i].file) { probe = list[i]; break; }
+    }
+    if (!probe) return Promise.resolve(true);       // 没有可探测条目：信候选表第一项
+    var cands = S_baseCandidates.length ? S_baseCandidates : [''];
+    return trySeq(cands, function (base) {
+      return fetch((base ? base : '') + encodeRepoPath('models/' + probe.path + '/' + probe.file))
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          S_modelsBase = base;
+          S_baseName = baseName(base);
+          pinBranch(base);
+          return true;
+        });
+    }).catch(function (e) {
+      console.warn('[viewer] API 清单拿到了，但所有源都取不到模型文件：' + (e && e.message));
+      return false;
+    });
+  }
+
+  // 整条 API 链的入口：任何一步失败都吞掉返回 null（页面继续走 models.json 流程，
+  // 不让「新功能挂了」演变成「老功能也挂了」）。
+  function discoverFromApi() {
+    return tryApiList().then(function (list) {
+      if (!list || !list.length) return null;
+      return resolveFileBase(list).then(function (ok) { return ok ? list : null; });
+    }).catch(function (e) {
+      console.warn('[viewer] API 清单不可用，回退 models.json：', e && e.message);
+      return null;
+    });
+  }
+
   function discoverFromIndex() {
     return fetchRepoJSON('models.json').then(function (d) {
       var list = (d && d.models) || [];
@@ -770,8 +898,17 @@
 
   function discoverModels() {
     S.source = '';
-    return discoverFromIndex()
-      .then(function (list) { S.source = 'index'; return list; })
+    // 部署态（非 localhost、非 ?src= 强制）先走线上自动发现；失败/不适用返回
+    // null，无缝落回下面的 models.json 流程 —— 新功能挂了不拖累老链路。
+    var useApi = !isLocalHost() && !S_forcedSrc;
+    return (useApi ? discoverFromApi() : Promise.resolve(null))
+      .then(function (apiList) {
+        if (apiList && apiList.length) { S.source = 'api'; return apiList; }
+        return discoverFromIndex().then(function (list) {
+          S.source = 'index';
+          return list;
+        });
+      })
       .catch(function (e1) {
         var fb = window.MODELS_FALLBACK || [];
         if (!fb.length) {
@@ -886,7 +1023,7 @@
     // 来源标注：清单从哪来 + 模型从哪个源取（同源 / GitHub 原始 / 加速地址 / 本机）。
     // 分离部署后「模型来自哪个 CDN」是件用户该看得见的事 —— 出问题时一眼知道该查谁。
     // 部署态的同源不再是「本机」：标「同源」，和 localhost 那种零网络模式区分开。
-    var srcLabel = { index: 'models.json', fallback: '内置清单' }[S.source] || '';
+    var srcLabel = { api: '仓库实时', index: 'models.json', fallback: '内置清单' }[S.source] || '';
     var baseTag = { github: 'GitHub', accel: '加速', local: isLocalHost() ? '' : '同源' }[S_baseName] || '';
     var tag = [srcLabel, baseTag].filter(Boolean).join(' · ');
     els.modelCount.textContent = kw
@@ -5777,9 +5914,11 @@
       }
 
       // 记录发现来源，便于排查
-      var srcFrom = (S.source === 'index')
-        ? 'models.json（' + (S_modelsBase ? S_modelsBase + 'models.json' : '随页面同源') + '）'
-        : '内置兜底清单';
+      var srcFrom = (S.source === 'api')
+        ? '仓库实时（/api/models → GitHub 仓库树，push 后自动出现）'
+        : (S.source === 'index')
+          ? 'models.json（' + (S_modelsBase ? S_modelsBase + 'models.json' : '随页面同源') + '）'
+          : '内置兜底清单';
       var branchNow = S_branchByBase[S_modelsBase] || '';
       var baseFrom = S_modelsBase
         ? (S_baseName === 'accel' ? (accelLabel(S_accelBase) || '第三方加速地址') : 'raw.githubusercontent.com') +
@@ -5810,6 +5949,9 @@
           S: S, els: els, app: S.app,
           mm: motionManager,
           handleLocalZip: handleLocalZip,
+          // Trees API 文件表 → 清单条目 的映射函数（API 自动发现的核心纯函数）。
+          // 挂出来是为了自动化验证能在不依赖网络的情况下直接喂数据断言映射结果。
+          treeMap: treeToEntries,
           // 模型资源基址快照（只读）：页面/模型分离后，「模型到底从哪个源取的」
           // 是排查问题的第一现场 —— 是走了 GitHub 原始地址？兜底切到哪个加速站？还是被判成本机同源？
           base: function () {

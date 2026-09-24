@@ -14,8 +14,10 @@ python -m http.server 8000
 
 然后打开 <http://localhost:8000/>。
 
-> 页面直接读取项目根目录下的 `models.json`（由 `models_tool.py` 扫描 `models/` 生成）。
-> 加了新模型后，先 `python models_tool.py` 刷一次清单即可。
+> **线上部署不需要跑任何命令**：页面会通过 `/api/models`（Vercel 函数）/ GitHub Trees API
+> 实时列出 `models/` 里的全部模型，push 完自动出现。`models.json` 只是 API 都失败时的兜底。
+> 本地预览（localhost）不查 API，仍读 `models.json` —— 想让本地也看到新模型时才需要
+> `python models_tool.py` 刷一次清单。
 
 ## 部署到 GitHub Pages
 
@@ -79,14 +81,20 @@ Pages 从 `gh-pages` 发布。页面加载模型的**源优先级**（2026-09-24
 与 GitHub Pages 的「壳分支」不同，整仓托管会把 `models/`（83MB、43 个模型）一起
 发上托管方的边缘 CDN。2026-09-24 起页面**优先从部署同源**取模型 —— 谁托管、谁出流量，
 不再绕道 `raw.githubusercontent.com` 跨洋拉几十个小文件（慢 + 429 限速 + 5 分钟缓存，
-正是此前「部署了还是慢」的根因）。改动只在 `assets/js/app.js`：
+正是此前「部署了还是慢」的根因）。同一天加上了**线上自动发现**：仓库里的 `api/models.js`
+会被 Vercel 自动部署成 `/api/models` 函数（零配置），清单跟随 push 实时生成，
+不用再跑 `python models_tool.py`。改动分布在 `assets/js/app.js` + `api/models.js`：
 
-- 同源命中 `models.json` 后，先用清单里第一个模型文件**「验明正身」**：
+- API 拿到清单后，仍按「同源 → GitHub 原始 → 加速」的顺序用第一个模型文件探测基址：
+  谁应答谁就是本次的模型源（语义与清单流的「验明正身」一致）
+- 同源命中 `models.json`（清单兜底路径）后，先用清单里第一个模型文件**「验明正身」**：
   壳形态的部署（同源有清单副本但没有 `models/`，如 `gh-pages`）验不过会自动
   除名同源、落回 GitHub 原始地址 —— 清单永远读 `master`、永远新鲜
 - `?src=github` / `?src=accel` 强制外部源；`?src=local` 反向强制**只试同源、
-  不兜底**，用来排查「同源到底有没有生效」
-- 侧栏标题旁的来源标注：同源命中显示「同源」，悬停可见完整说明
+  不兜底**，用来排查「同源到底有没有生效」（`?src=` 强制模式同时会跳过 API 发现链）
+- 侧栏标题旁的来源标注：`仓库实时` / `models.json` + `同源`，悬停可见完整说明
+- 函数可选配 `GITHUB_TOKEN` 环境变量（细粒度 PAT，公共仓库只读不用勾权限），
+  把 GitHub 限流从 60 次/时 提到 5000 次/时 —— 个人站不配也够用
 - 注意：`*.vercel.app` 默认域在国内不可达，建议绑自定义域（如经 Cloudflare）
 
 
@@ -114,14 +122,20 @@ models/
 
 ### 模型是怎么被发现的
 
-浏览器不允许直接列目录，所以页面**直接读取项目根目录下的清单文件 `models.json`**，读不到时才退回内置兜底清单：
+浏览器不允许直接列目录，历史上只能读 `models_tool.py` 生成的 `models.json`。
+2026-09-24 起清单多了**线上实时层**，加/删模型只要 push，不再需要人肉跑脚本：
 
 | 顺序 | 方式 | 说明 |
 | --- | --- | --- |
-| 1 | **`models.json`** | 位于**仓库根目录**，由 `models_tool.py` 扫描 `models/` 生成。直接读文件，不限流、任意静态托管、离线可用，推荐提交到仓库 |
-| 2 | **内置兜底清单** | 写死在脚本里的 `MODELS_FALLBACK`，**只放了一个模型**，仅为保证页面能起来；正常情况下走第 1 级 |
+| 0 | **`/api/models`（API 实时）** | Vercel Serverless 函数（`api/models.js`）：服务端查 GitHub 仓库树，现场生成全部 `*.model3.json` 清单。在服务端查是因为国内访客直连 `api.github.com` 常被 TLS 掐断；函数自带 5 分钟缓存，可选配 `GITHUB_TOKEN` 环境变量把 GitHub 限流从 60/时 提到 5000/时。没有函数的托管（GitHub Pages 等）跳过这一级 |
+| 0.5 | **GitHub Trees API（直连）** | 浏览器直接查仓库树，master 挂了试 main。能不能成看访客网络（`?src=` 强制模式和 localhost 不进这条链） |
+| 1 | **`models.json`** | 位于**仓库根目录**，由 `models_tool.py` 扫描 `models/` 生成。直接读文件，不限流、任意静态托管、离线可用 —— 现在是 API 层的兜底，本地预览的主路径 |
+| 2 | **内置兜底清单** | 写死在脚本里的 `MODELS_FALLBACK`，**只放了一个模型**，仅为保证页面能起来；正常情况下走不到这一级 |
 
-侧栏标题旁会显示当前用的是哪种来源（鼠标悬停可看完整说明）。
+> 清单来源和**模型文件来源**是两回事：API 拿到清单后仍会按「同源 → GitHub 原始 → 加速」
+> 的顺序探测第一个模型文件来钉住基址（语义与清单流的「验明正身」一致）。
+
+侧栏标题旁会显示当前用的是哪种来源（`仓库实时` / `models.json` / `内置清单`，鼠标悬停可看完整说明）。
 
 > **页面与模型分居两个分支**（见上面「部署到 GitHub Pages」）。页面部署在 `gh-pages` 上时，
 > 这一级会去 `master` / `main` 的绝对地址取 `models.json` 与 `models/`；
@@ -178,7 +192,8 @@ python models_tool.py -job release -plan   # 只看计划，不落盘
 
 > 脚本每次都会在最后一行打一段 JSON（`total` / `new` / `gone` / `new_models`），CI 读它拿结果，不用去解析人类可读的日志。
 >
-> `models.json` 是页面唯一的模型发现来源。**没有它页面会退回内置兜底清单**（只有一个模型）。加完模型记得重新跑一次脚本。
+> 线上部署里 `models.json` 只是 API 实时清单的**兜底**（API 挂了页面照样有列表）；
+> localhost 本地预览则**只**读它。加完模型想让本地预览也看到时，记得重新跑一次脚本。
 
 
 ## 隐藏多余图层
