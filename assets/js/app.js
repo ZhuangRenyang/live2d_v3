@@ -43,6 +43,12 @@
   // 探明之后候选表会收窄成「同一分支的原始地址 + 加速地址」（见 pinBranch）。
   var BRANCHES = ['master', 'main'];
 
+  // 首次访问（没记忆过选择）时默认展示的模型。
+  // ⚠️ 取值 = models.json 条目的 key（path + '/' + file，boot() 里选初始模型用它比对）。
+  //    换默认时照着 models.json 里对应条目的 path/file 抄即可；
+  //    匹配不到（模型删了/改了名）会自动落回「列表第一个」，不会白屏。
+  var DEFAULT_MODEL_KEY = '小爱弥斯_vts/小爱弥斯.model3.json';
+
   function rawBaseOf(branch) {
     return 'https://raw.githubusercontent.com/' + REPO_OWNER + '/' + REPO_NAME + '/' + branch + '/';
   }
@@ -5784,9 +5790,11 @@
       els.modelCount.title = '清单来源：' + srcFrom + '\n模型来源：' + baseFrom;
 
       renderModels();
-      // 选初始模型，优先级：?model= 参数 > localStorage 记忆 > 列表第一个
+      // 选初始模型，优先级：?model= 参数 > localStorage 记忆 > DEFAULT_MODEL_KEY > 列表第一个
+      // （回访用户记住的是自己上次的选择；默认只对「没记忆过」的首次访问生效）
       var pick = S.models[0], pickKey = wantModelFromURL();
       if (!pickKey && st && st.model) pickKey = st.model;
+      if (!pickKey && DEFAULT_MODEL_KEY) pickKey = DEFAULT_MODEL_KEY;
       if (pickKey) {
         for (var i = 0; i < S.models.length; i++) {
           if (S.models[i].key === pickKey) { pick = S.models[i]; break; }

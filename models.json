@@ -1,20 +1,26 @@
 {
   "version": 1,
-  "count": 5,
+  "count": 6,
   "models": [
     {
-      "path": "Celeste - free",
-      "file": "Celeste.model3.json",
-      "name": "Celeste",
+      "path": "小爱弥斯_vts",
+      "file": "小爱弥斯.model3.json",
+      "name": "小爱弥斯",
       "group": "",
       "parts": [
-        "Celeste - free"
+        "小爱弥斯_vts"
       ],
-      "motions": 0,
-      "motionGroups": [],
-      "textures": 4,
-      "mocVersion": "4.2",
-      "size": 62354783,
+      "motions": 42,
+      "motionGroups": [
+        "Expression",
+        "Idle",
+        "Other",
+        "TapLong",
+        "TapShort"
+      ],
+      "textures": 2,
+      "mocVersion": "5.0",
+      "size": 3366110,
       "missing": []
     },
     {
@@ -76,21 +82,35 @@
       "missing": []
     },
     {
-      "path": "用户上传/z46_2",
-      "file": "z46_2.model3.json",
-      "name": "z46_2",
+      "path": "用户上传/兔兔",
+      "file": "520兔兔.model3.json",
+      "name": "520兔兔",
       "group": "用户上传",
       "parts": [
         "用户上传",
-        "z46_2"
+        "兔兔"
       ],
-      "motions": 14,
-      "motionGroups": [
-        ""
+      "motions": 0,
+      "motionGroups": [],
+      "textures": 3,
+      "mocVersion": "4.2",
+      "size": 13935243,
+      "missing": []
+    },
+    {
+      "path": "用户上传/mianfeimox",
+      "file": "llny.model3.json",
+      "name": "llny",
+      "group": "用户上传",
+      "parts": [
+        "用户上传",
+        "mianfeimox"
       ],
+      "motions": 0,
+      "motionGroups": [],
       "textures": 2,
-      "mocVersion": "3.0",
-      "size": 5332804,
+      "mocVersion": "4.2",
+      "size": 33451951,
       "missing": []
     }
   ]
